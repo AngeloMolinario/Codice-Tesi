@@ -35,8 +35,8 @@ if __name__ == "__main__":
 
 
     with torch.no_grad():
-        outputs = custom_model(**inputs)
-        custom_output = model(**inputs)
+        outputs = custom_model(**inputs, return_loss=True)
+        custom_output = model(**inputs, return_loss=True)
 
     print("Outputs logit_per_image are equal:", torch.allclose(outputs.logits_per_image, custom_output.logits_per_image, atol=1e-9))
     print("Outputs logit_per_text are equal:", torch.allclose(outputs.logits_per_text, custom_output.logits_per_text, atol=1e-9))
@@ -49,5 +49,16 @@ if __name__ == "__main__":
     if outputs.loss is not None and custom_output.loss is not None:
         print("Outputs loss is equal:", torch.allclose(outputs.loss, custom_output.loss, atol=1e-9))
     
-    print("Outputs are equal:", outputs == custom_output)
     print("Forward pass completed successfully.")
+
+     # Calcolo e stampa delle probabilità delle due classi per entrambi i modelli
+    probs_custom = outputs.logits_per_image.softmax(dim=-1)
+    probs_original = custom_output.logits_per_image.softmax(dim=-1)
+
+    print("\nProbabilità classi (Custom Model):")
+    for idx, label in enumerate(text):
+        print(f"  {label}: {probs_custom[0, idx].item():.4f}")
+
+    print("\nProbabilità classi (Original Model):")
+    for idx, label in enumerate(text):
+        print(f"  {label}: {probs_original[0, idx].item():.4f}")
