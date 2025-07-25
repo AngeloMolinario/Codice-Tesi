@@ -2,10 +2,10 @@ from typing import Optional
 import torch
 from torch import nn
 from .vision import SiglipVisionModel
+from .text import SiglipTextModel
 
 from transformers.models.siglip.modeling_siglip import (
     SiglipPreTrainedModel,
-    SiglipTextModel,
 )
 from transformers.models.siglip.configuration_siglip import (
     SiglipConfig,
