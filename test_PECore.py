@@ -33,7 +33,8 @@ if __name__ == '__main__':
 
     pil_images = Image.open("./test/image.jpg")
     image = preprocess(pil_images).unsqueeze(0).to(device)
-    text = tokenizer(["A photo of a male", "A photo of a female"]).to(device)
+    testo= ["A photo of a male", "A photo of a female"]
+    text = tokenizer(testo).to(device)
 
     with torch.no_grad():
         image_features, text_features, logit_scale = model(image, text)
@@ -47,4 +48,8 @@ if __name__ == '__main__':
     print("Outputs logit_scale is equal:", torch.allclose(logit_scale, custom_logit_scale, atol=1e-9))
     print("Text probabilities are equal:", torch.allclose(text_probs, custom_text_probs, atol=1e-9))
     print("Forward pass completed successfully.")
-    
+    print("\n\n")
+    for label in testo:
+        print(f"\n\nText: {label}")
+        print(f"\tModel: {text_probs[0][testo.index(label)]:4f}")
+        print(f"\tCustom Model: {custom_text_probs[0][testo.index(label)]:4f}")
