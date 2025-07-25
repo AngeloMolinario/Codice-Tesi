@@ -1,3 +1,4 @@
 .env_win
 hf_models
 __pycache__
+core
