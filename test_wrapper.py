@@ -1,4 +1,4 @@
-from wrappers.SigLip2Model import SiglipModel
+from wrappers.SigLip2.SigLip2Model import SiglipModel
 from transformers import AutoProcessor
 from transformers import AutoModel
 from PIL import Image

@@ -26,6 +26,10 @@ class CustomSiglipTextTransformer(nn.Module):
         self.head = nn.Linear(embed_dim, config.projection_size)
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
+        # Add the logic for the prompt learner
+        prompt_learner = nn.Parameter(torch.randn(100, embed_dim))
+        self.register_parameter("prompt_learner", prompt_learner)
+
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -81,7 +85,6 @@ class SiglipTextModel(SiglipPreTrainedModel):
     def __init__(self, config: SiglipTextConfig):
         super().__init__(config)
         self.text_model = CustomSiglipTextTransformer(config)
-        # Initialize weights and apply final processing
         self.post_init()
 
     def get_input_embeddings(self) -> nn.Module:
@@ -99,22 +102,6 @@ class SiglipTextModel(SiglipPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
     ) -> BaseModelOutputWithPooling:
-        r"""
-        Examples:
-
-        ```python
-        >>> from transformers import AutoTokenizer, SiglipTextModel
-
-        >>> model = SiglipTextModel.from_pretrained("google/siglip-base-patch16-224")
-        >>> tokenizer = AutoTokenizer.from_pretrained("google/siglip-base-patch16-224")
-
-        >>> # important: make sure to set padding="max_length" as that's how the model was trained
-        >>> inputs = tokenizer(["a photo of a cat", "a photo of a dog"], padding="max_length", return_tensors="pt")
-
-        >>> outputs = model(**inputs)
-        >>> last_hidden_state = outputs.last_hidden_state
-        >>> pooled_output = outputs.pooler_output  # pooled (EOS token) states
-        ```"""
 
         return self.text_model(
             input_ids=input_ids,
