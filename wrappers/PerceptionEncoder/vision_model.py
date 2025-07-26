@@ -10,6 +10,7 @@ from torch.nn import functional as F
 from dataclasses import asdict
 
 from wrappers.PerceptionEncoder.CustomRope2D import CustomRope2D
+from wrappers.promptopt.prompt_learner import PromptLearner
 
 logger = getLogger()
 
@@ -35,6 +36,7 @@ class VisionTransformer(nn.Module):
         output_dim: Optional[int] = 1280,
         attn_pooler_heads: int = 8,
         pool_type: Literal["attn", "tok", "avg", "none"] = "attn",
+        num_prompt: int = 0, # Number of context prompt tokens to be prepended to the image patches
     ):
         super().__init__()
         assert pool_type in ("attn", "tok", "avg", "none")
@@ -52,7 +54,7 @@ class VisionTransformer(nn.Module):
         self.use_rope2d = use_rope2d
         self.image_size = image_size
 
-        self.num_prompt = 1  # Number of prompt tokens, can be adjusted as needed
+        self.num_prompt = num_prompt  # Number of prompt tokens, can be adjusted as needed
 
         self.conv1 = nn.Conv2d(
             in_channels=3,
@@ -61,15 +63,16 @@ class VisionTransformer(nn.Module):
             stride=patch_size,
             bias=False,
         )
-        self.rope = (
-            CustomRope2D(
-                dim=width // heads,
-                num_prompt=self.num_prompt,
-                use_cls_token=self.use_cls_token,
-            )
-            if self.use_rope2d
-            else None
-        )
+
+        self.rope = None
+        if self.use_rope2d:
+            if self.num_prompt == 0:
+                self.rope = Rope2D(dim=width // heads, use_cls_token=use_cls_token)
+            else:
+                self.rope = CustomRope2D(dim=width // heads, num_prompt=num_prompt, use_cls_token=use_cls_token)
+
+
+        
 
         self.ln_pre = norm_layer(width) if use_ln_pre else nn.Identity()
         self.ln_post = norm_layer(self.width) if use_ln_post else nn.Identity()
@@ -101,8 +104,12 @@ class VisionTransformer(nn.Module):
 
 
         # Prompt tuning learnable parameters
-        self.cntx = nn.Parameter(torch.zeros(1, self.num_prompt, 768))
-        self.register_parameter("Prompt_learner", self.cntx)
+        if self.num_prompt > 0:
+            logger.info(f"Using {self.num_prompt} prompt tokens.")
+            self.prompt_learner = PromptLearner(self.num_prompt, self.width)
+        else:
+            logger.info("No prompt tokens used.")
+            self.prompt_learner = None
 
     def init_tensors(self):
         def init_submodule_tensors(module):
@@ -162,7 +169,29 @@ class VisionTransformer(nn.Module):
         self.transformer.truncate(layer_idx)
         self.layers = self.transformer.layers
 
-
+    def get_config(self):
+        config = {
+            "patch_size": self.patch_size,
+            "width": self.width,
+            "layers": self.layers,
+            "heads": self.heads,
+            "mlp_ratio": self.mlp_ratio,
+            "act_layer": self.act_layer,
+            "norm_layer": self.norm_layer,
+            "use_ln_pre": self.use_ln_pre,
+            "use_ln_post": self.use_ln_post,
+            "ls_init_value": self.ls_init_value,
+            "drop_path": self.drop_path,
+            "image_size": self.image_size,
+            "use_abs_posemb": self.use_abs_posemb,
+            "use_rope2d": self.use_rope2d,
+            "use_cls_token": self.use_cls_token,
+            "output_dim": self.output_dim,
+            "attn_pooler_heads": self.attn_pooler_heads,
+            "pool_type": self.pool_type,
+            "num_prompt": self.num_prompt,  # Number of prompt tokens
+        }
+        return config
     @classmethod
     def from_config(
         cls,
@@ -250,8 +279,9 @@ class VisionTransformer(nn.Module):
         if self.use_abs_posemb:
             x = x + self._sample_abs_posemb(grid_h, grid_w)
         
-        cntx = self.cntx.expand(batch, -1, -1)  # [B, 1, D] if cntx is [1, 1, D]
-        x = torch.cat([cntx, x], dim=1)
+        # If self.num_prompt > 0 than use the PromptLearner to prepend prompt tokens
+        if self.num_prompt > 0:
+            x = self.prompt_learner(x, is_cls_present=self.use_cls_token)
 
         if self.use_rope2d:
             self.rope.update_grid(x.device, grid_h, grid_w)
