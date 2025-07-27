@@ -53,8 +53,7 @@ class PromptLearner(nn.Module):
 
         super().__init__()
         n_cls = len(classnames) 
-        ctx_init = ctx_init
-        dtype = textModel.dtype
+        dtype = textModel.token_embedding.weight.dtype  # Get the dtype from the text model
 
         # Generate the prompt placeholders for the tokenizer
         prompt_prefix = " ".join(["X"] * n_ctx)
@@ -101,10 +100,10 @@ class TaskPromptLearner(nn.Module):
     '''
         This class is used to learn the context vectors for the specific task.
     '''
-    def __init__(self, n_ctx, tasknames, text_model, tokenize, verbose=False):
+    def __init__(self, n_ctx, tasknames, text_model, tokenizer, verbose=False):
         super().__init__()
         n_task = len(tasknames)
-        dtype = text_model.dtype
+        dtype = text_model.token_embedding.weight.dtype  # Get the dtype from the text model
         ctx_dim = text_model.width
         
          # Generate n_ctx context vectors for the each task
@@ -204,13 +203,13 @@ class CustomModel(nn.Module):
         - dtype: the data type of the model (e.g. torch.float32)
 
     '''
-    def __init__(self, n_ctx, tasknames, classnames, model):
-        super().__init__()
-        self.prompt_learner = nn.ModuleList([PromptLearner(n_ctx, c, model.text_model) for c in classnames])
-        self.task_prompt_learner = TaskPromptLearner(n_ctx, tasknames, model.text_model)
+    def __init__(self, n_ctx, tasknames, classnames, model, tokenizer):
+        super().__init__()        
+        self.prompt_learner = nn.ModuleList([PromptLearner(n_ctx, c, model.text_model, tokenizer) for c in classnames])
+        self.task_prompt_learner = TaskPromptLearner(n_ctx, tasknames, model.text_model, tokenizer)
         self.task_tokenized_prompts = self.task_prompt_learner.tokenized_prompts
 
-    
+        self.model = model    
         self.image_encoder = model.visual
         self.text_encoder = model.text_model
         self.logit_scale = model.logit_scale
