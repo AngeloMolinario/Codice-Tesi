@@ -10,7 +10,7 @@ from torch.nn import functional as F
 from dataclasses import asdict
 
 from wrappers.PerceptionEncoder.CustomRope2D import CustomRope2D
-from wrappers.promptopt.prompt_learner import PromptLearner
+from wrappers.promptopt.prompt_learner import VisionPromptLearner
 
 logger = getLogger()
 
@@ -64,14 +64,15 @@ class VisionTransformer(nn.Module):
             bias=False,
         )
 
-        self.rope = None
-        if self.use_rope2d:
-            if self.num_prompt == 0:
-                self.rope = Rope2D(dim=width // heads, use_cls_token=use_cls_token)
-            else:
-                self.rope = CustomRope2D(dim=width // heads, num_prompt=num_prompt, use_cls_token=use_cls_token)
-
-
+        self.rope = (
+                CustomRope2D(
+                    dim=width // heads,
+                    num_prompt=num_prompt,
+                    use_cls_token=self.use_cls_token,
+                )
+                if self.use_rope2d
+                else None
+            )
         
 
         self.ln_pre = norm_layer(width) if use_ln_pre else nn.Identity()
@@ -106,7 +107,7 @@ class VisionTransformer(nn.Module):
         # Prompt tuning learnable parameters
         if self.num_prompt > 0:
             logger.info(f"Using {self.num_prompt} prompt tokens.")
-            self.prompt_learner = PromptLearner(self.num_prompt, self.width)
+            self.prompt_learner = VisionPromptLearner(self.num_prompt, self.width, self.use_cls_token)
         else:
             logger.info("No prompt tokens used.")
             self.prompt_learner = None
@@ -281,7 +282,7 @@ class VisionTransformer(nn.Module):
         
         # If self.num_prompt > 0 than use the PromptLearner to prepend prompt tokens
         if self.num_prompt > 0:
-            x = self.prompt_learner(x, is_cls_present=self.use_cls_token)
+            x = self.prompt_learner(x)
 
         if self.use_rope2d:
             self.rope.update_grid(x.device, grid_h, grid_w)

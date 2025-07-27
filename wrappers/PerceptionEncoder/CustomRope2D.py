@@ -63,37 +63,42 @@ class CustomRope2D:
         # q, k: [batch, heads, seq_len, dim]
         num_prompts = self.num_prompt
 
-        if self.use_cls_token:
-            # Split components when cls token is present
-            cls_q, prompt_q, patch_q = q[:, :, 0:1], q[:, :, 1:1+num_prompts], q[:, :, 1+num_prompts:]
-            cls_k, prompt_k, patch_k = k[:, :, 0:1], k[:, :, 1:1+num_prompts], k[:, :, 1+num_prompts:]
+        if num_prompts > 0:
+            if self.use_cls_token:
+                # Split: cls + prompts + patches
+                cls_q, prompt_q, patch_q = q[:, :, 0:1], q[:, :, 1:1+num_prompts], q[:, :, 1+num_prompts:]
+                cls_k, prompt_k, patch_k = k[:, :, 0:1], k[:, :, 1:1+num_prompts], k[:, :, 1+num_prompts:]
 
-            # Apply rotary to [cls + patches]
-            q_to_rotate = torch.cat([cls_q, patch_q], dim=2)
-            k_to_rotate = torch.cat([cls_k, patch_k], dim=2)
+                # Apply RoPE only to cls + patches (skip prompts)
+                q_to_rotate = torch.cat([cls_q, patch_q], dim=2)
+                k_to_rotate = torch.cat([cls_k, patch_k], dim=2)
+                
+                q_rotated = apply_rotary_emb(self.freq[:, None, :, :], q_to_rotate)
+                k_rotated = apply_rotary_emb(self.freq[:, None, :, :], k_to_rotate)
 
-            q_rotated = apply_rotary_emb(self.freq[:, None, :, :], q_to_rotate)
-            k_rotated = apply_rotary_emb(self.freq[:, None, :, :], k_to_rotate)
+                # Split back the rotated tensors
+                cls_q_rot, patch_q_rot = q_rotated[:, :, :1], q_rotated[:, :, 1:]
+                cls_k_rot, patch_k_rot = k_rotated[:, :, :1], k_rotated[:, :, 1:]
 
-            # Split back
-            cls_q_rot, patch_q_rot = q_rotated[:, :, :1], q_rotated[:, :, 1:]
-            cls_k_rot, patch_k_rot = k_rotated[:, :, :1], k_rotated[:, :, 1:]
+                # Reconstruct: cls + prompts + patches (prompts unchanged)
+                q = torch.cat([cls_q_rot, prompt_q, patch_q_rot], dim=2)
+                k = torch.cat([cls_k_rot, prompt_k, patch_k_rot], dim=2)
+            else:
+                # Split: prompts + patches
+                prompt_q, patch_q = q[:, :, :num_prompts], q[:, :, num_prompts:]
+                prompt_k, patch_k = k[:, :, :num_prompts], k[:, :, num_prompts:]
 
-            # Reconstruct: cls + prompts + patches
-            q = torch.cat([cls_q_rot, prompt_q, patch_q_rot], dim=2)
-            k = torch.cat([cls_k_rot, prompt_k, patch_k_rot], dim=2)
+                # Apply RoPE only to patches (skip prompts)
+                patch_q_rot = apply_rotary_emb(self.freq[:, None, :, :], patch_q)
+                patch_k_rot = apply_rotary_emb(self.freq[:, None, :, :], patch_k)
+
+                # Reconstruct: prompts + patches (prompts unchanged)
+                q = torch.cat([prompt_q, patch_q_rot], dim=2)
+                k = torch.cat([prompt_k, patch_k_rot], dim=2)
         else:
-            # No cls token: only prompts + patches
-            prompt_q, patch_q = q[:, :, :num_prompts], q[:, :, num_prompts:]
-            prompt_k, patch_k = k[:, :, :num_prompts], k[:, :, num_prompts:]
-
-            # Apply rotary to only patches
-            patch_q_rot = apply_rotary_emb(self.freq[:, None, :, :], patch_q)
-            patch_k_rot = apply_rotary_emb(self.freq[:, None, :, :], patch_k)
-
-            # Reconstruct: prompts + patches
-            q = torch.cat([prompt_q, patch_q_rot], dim=2)
-            k = torch.cat([prompt_k, patch_k_rot], dim=2)
+            # No prompts: apply RoPE to the entire sequence (cls + patches or just patches) like in the original RoPE2d
+            q = apply_rotary_emb(self.freq[:, None, :, :], q)
+            k = apply_rotary_emb(self.freq[:, None, :, :], k)
 
         return q, k
 
