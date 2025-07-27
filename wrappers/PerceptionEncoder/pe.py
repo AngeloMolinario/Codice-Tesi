@@ -28,6 +28,7 @@ class PECore(nn.Module):
         self.image_size = self.visual.image_size  # For ease of use
         self.text_model = CustomTextTransformer(**asdict(text_cfg))
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
+        self.dtype = vision_cfg.dtype
 
     def encode_image(self, image, normalize: bool = False):
         x = self.visual(image)
