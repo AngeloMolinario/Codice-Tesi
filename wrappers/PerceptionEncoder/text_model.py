@@ -110,6 +110,8 @@ class TextTransformer(nn.Module):
             print(f"Unexpected keys for TextTransformer: {u}")
 
     def build_cls_mask(self, text):
+        # Used to build the mask for the CLS token in the text transformer
+        # In the choosen model there isn't a CLS token, so we can remove this method
         cls_mask = (text != self.pad_id).unsqueeze(1)
         cls_mask = F.pad(cls_mask, (1, 0, cls_mask.shape[2], 0), value=True)
         additive_mask = torch.empty(cls_mask.shape, device=cls_mask.device)
@@ -158,4 +160,34 @@ class TextTransformer(nn.Module):
         if self.output_tokens:
             return pooled, tokens
 
+        return pooled
+    def prompt_forward(self, prompts, tokenized_prompts):
+        """
+        Forward pass for the text transformer with prompts.
+            :param prompts: The prompts to be processed.
+            :param tokenized_prompts: The tokenized prompts.
+            :return: The processed text features.
+        """
+    
+        seq_len = tokenized_prompts.shape[1]
+        attn_mask = self.attn_mask
+        if attn_mask is not None:
+            attn_mask = attn_mask[:seq_len, :seq_len]
+
+        # Add positional embeddings
+        x = prompts + self.positional_embedding[:seq_len]
+
+        
+        # Forward through the transformer
+        x = self.transformer(x, attn_mask=attn_mask)
+        
+        # Normalize and project the output
+        x = self.ln_final(x)
+        pooled, tokens = self.text_global_pool(x, tokenized_prompts, pool_type=self.pool_type)
+        
+        if isinstance(self.text_projection, nn.Linear):
+            pooled = self.text_projection(pooled)
+        else:
+            pooled = pooled @ self.text_projection
+        
         return pooled
