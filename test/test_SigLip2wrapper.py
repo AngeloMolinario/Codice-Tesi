@@ -1,3 +1,9 @@
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+
 from wrappers.SigLip2.SigLip2Model import SiglipModel
 from transformers import AutoProcessor
 from transformers import AutoModel

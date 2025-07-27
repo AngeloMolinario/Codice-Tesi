@@ -1,7 +1,22 @@
+'''
+This script tests the PECoreWrapperVPT functionality by comparing the outputs of different configurations of the PECore model.
+It evaluates the correctness of the loaded weights for the model by checking the embeddings, logit scale, and class probabilities
+between the wrapper class and the original PECore model from the official repository. It also check the VPT functionality by defining a
+custom number of prompts and comparing the outputs.
+
+It saves the results and probabilities to a JSON file for further analysis.
+
+'''
+
 import torch
 import json
 import os
+import sys
 from PIL import Image
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 import core.vision_encoder.pe as pe
 import core.vision_encoder.transforms as transforms
 from wrappers.PerceptionEncoder.pe import PECore
@@ -30,7 +45,8 @@ def print_model_info(models, names):
     for model, name in zip(models, names):
         print(f"\n{'#'*10} {name} Configuration {'#'*10}")
         print(f"Model type: {type(model)}")
-        print(f"Vision encoder: {type(model.visual)}")
+        print(f"Vision encoder: {type(model.visual)}")        
+        print(f"Visual RoPE2D: {type(model.visual.rope)}")
         print(f"{'#'*10} End {name} Configuration {'#'*10}\n")
 
 # === TEST FUNCTIONS ===
