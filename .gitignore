@@ -5,3 +5,4 @@ core
 .json
 test_result
 *.xlsx
+datasets_with_standard_labels
