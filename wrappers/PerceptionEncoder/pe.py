@@ -26,7 +26,7 @@ class PECore(nn.Module):
         super(PECore, self).__init__()
         self.visual = CustomVisionTransformer(**asdict(vision_cfg), num_prompt=num_prompt)
         self.image_size = self.visual.image_size  # For ease of use
-        self.text_transformer = CustomTextTransformer(**asdict(text_cfg))
+        self.text_model = CustomTextTransformer(**asdict(text_cfg))
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
 
     def encode_image(self, image, normalize: bool = False):
@@ -34,7 +34,7 @@ class PECore(nn.Module):
         return F.normalize(x, dim=-1) if normalize else x
 
     def encode_text(self, text, normalize: bool = False):
-        x = self.text_transformer(text)
+        x = self.text_model(text)
         return F.normalize(x, dim=-1) if normalize else x
 
     def forward(
@@ -63,6 +63,17 @@ class PECore(nn.Module):
         elif "logit_scale" in _sd.get("module", {}):
             self.logit_scale.data.copy_(_sd["module"]["logit_scale"])
 
+    def load_ckpt(self,
+        name: str,
+        checkpoint_path: Optional[str] = None,
+    ):
+        if name not in PE_VISION_CONFIG or name not in PE_TEXT_CONFIG:
+            raise RuntimeError(f"{name} not found in configs.")
+
+        self.visual.load_ckpt(fetch_pe_checkpoint(name, checkpoint_path))
+        self.text_model.load_ckpt(fetch_pe_checkpoint(name, checkpoint_path))
+        self.load_logit_scale(fetch_pe_checkpoint(name, checkpoint_path))
+
     @classmethod
     def from_config(
         cls,
@@ -77,60 +88,7 @@ class PECore(nn.Module):
         model = cls(PE_VISION_CONFIG[name], PE_TEXT_CONFIG[name], num_prompt=num_prompt)
         if pretrained:
             model.visual.load_ckpt(fetch_pe_checkpoint(name, checkpoint_path))
-            model.text_transformer.load_ckpt(fetch_pe_checkpoint(name, checkpoint_path))
+            model.text_model.load_ckpt(fetch_pe_checkpoint(name, checkpoint_path))
             model.load_logit_scale(fetch_pe_checkpoint(name, checkpoint_path))
         return model
 
-class PECore_Old(TextTransformer):
-    def __init__(
-        self,
-        vision_cfg: PEConfig,
-        text_cfg: PETextConfig,
-        init_logit_scale: float = np.log(1 / 0.07)
-    ):
-        super(PECore_Old, self).__init__(**asdict(text_cfg))
-        self.visual = VisionTransformer(**asdict(vision_cfg))
-        self.image_size = self.visual.image_size  # For ease of use
-        self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
-
-    def encode_image(self, image, normalize: bool = False):
-        x = self.visual(image)
-        return F.normalize(x, dim=-1) if normalize else x
-
-    def encode_text(self, text, normalize: bool = False):
-        x = super().forward(text)
-        return F.normalize(x, dim=-1) if normalize else x
-
-    def forward(
-        self,
-        image: Optional[torch.Tensor] = None,
-        text: Optional[torch.Tensor] = None,
-    ):
-        image_features = (
-            self.encode_image(image, normalize=True) if image is not None else None
-        )
-        text_features = (
-            self.encode_text(text, normalize=True) if text is not None else None
-        )
-        return image_features, text_features, self.logit_scale.exp()
-    
-
-    @classmethod
-    def from_config(
-        cls,
-        name: str,
-        pretrained: bool = False,
-        checkpoint_path: Optional[str] = None  # To load your own
-    ):
-        if name not in PE_VISION_CONFIG or name not in PE_TEXT_CONFIG:
-            raise RuntimeError(f"{name} not found in configs.")
-    
-        model = cls(PE_VISION_CONFIG[name], PE_TEXT_CONFIG[name])
-        if pretrained:
-            model.load_ckpt(fetch_pe_checkpoint(name, checkpoint_path))
-        
-        return model
-
-    @classmethod
-    def available_configs(cls):
-        return [k for k in PE_VISION_CONFIG if k in PE_TEXT_CONFIG]
