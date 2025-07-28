@@ -228,7 +228,12 @@ class CustomModel(nn.Module):
         )
 
         self.num_classes = [len(x) for x in classnames]        
-                
+    
+    def get_softCPT_parameters(self):
+        """
+        Returns the parameters of the prompt learner and the task prompt learner.
+        """
+        return list(self.prompt_learner.parameters()) + list(self.task_prompt_learner.parameters()) + list(self.prompt_gen.parameters())
 
     def forward(self, image):
 
