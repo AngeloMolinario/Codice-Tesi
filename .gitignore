@@ -6,3 +6,4 @@ core
 test_result
 *.xlsx
 datasets_with_standard_labels
+MODEL_TEST
