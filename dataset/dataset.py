@@ -105,7 +105,6 @@ class BaseDataset(Dataset):
         self.age_groups = [map_age_to_group(age) for age in raw_ages]
         
         self.emotions = self.data['Facial Emotion'].fillna(-1).values
-        self.identities = self.data['Identity'].fillna(-1).values
 
     def __len__(self):
         # Return the number of images in the dataset
@@ -113,7 +112,7 @@ class BaseDataset(Dataset):
 
     def __getitem__(self, idx):
         # Load an image and its corresponding label
-        img_path = self.paths[idx]+".jpg"
+        img_path = self.paths[idx].replace("\\","/")+".jpg"
         image = Image.open(img_path).convert('RGB')
         
         # Apply transforms if provided
@@ -123,11 +122,114 @@ class BaseDataset(Dataset):
         # Create label dictionary with all attributes (missing values are -1)
         # Age is now returned as age group instead of raw age
         label = {
-            'gender': self.genders[idx],
-            'age': self.age_groups[idx],  # Now returns age group (0-8)
-            'emotion': self.emotions[idx],
-            'identity': self.identities[idx]
+            'gender': torch.tensor(self.genders[idx]),
+            'age': torch.tensor(self.age_groups[idx]),
+            'emotion': torch.tensor(self.emotions[idx])
         }
         
         return image, label
 
+
+class MultiDataset(Dataset):
+    def __init__(self, dataset_names, transform=None, split="train", datasets_root="datasets_with_standard_labels"):
+        """
+        Initialize MultiDataset with multiple datasets.
+        
+        Args:
+            dataset_names (list): List of dataset names to load
+            transform: Optional transforms to apply to images
+            split (str): Split to use ("train" or "test")
+            datasets_root (str): Root directory containing all datasets
+        """
+        self.dataset_names = dataset_names
+        self.transform = transform
+        self.split = split
+        self.datasets_root = datasets_root
+        
+        # Load all datasets
+        self.datasets = []
+        self.dataset_lengths = []
+        self.cumulative_lengths = [0]
+        
+        for dataset_name in dataset_names:
+            dataset_path = os.path.join(datasets_root, dataset_name)
+            try:
+                dataset = BaseDataset(root=dataset_path, transform=transform, split=split)
+                self.datasets.append(dataset)
+                self.dataset_lengths.append(len(dataset))
+                self.cumulative_lengths.append(self.cumulative_lengths[-1] + len(dataset))
+            except Exception as e:
+                print(f"Warning: Could not load dataset {dataset_name}: {e}")
+                continue
+        
+        if not self.datasets:
+            raise ValueError("No datasets could be loaded successfully")
+        
+        # Total length is the sum of all dataset lengths
+        self.total_length = self.cumulative_lengths[-1]
+        
+        print(f"Loaded {len(self.datasets)} datasets with total {self.total_length} samples:")
+        for i, name in enumerate([name for name in dataset_names if i < len(self.datasets)]):
+            print(f"  - {name}: {self.dataset_lengths[i]} samples")
+
+    def __len__(self):
+        return self.total_length
+
+    def __getitem__(self, idx):
+        """
+        Get item from the appropriate dataset based on the global index.
+        
+        Args:
+            idx: Global index across all datasets
+            
+        Returns:
+            tuple: (image, label) with the same format as BaseDataset
+        """
+        if idx >= self.total_length or idx < 0:
+            raise IndexError(f"Index {idx} out of range for dataset of size {self.total_length}")
+        
+        # Find which dataset this index belongs to
+        dataset_idx = 0
+        for i, cumulative_length in enumerate(self.cumulative_lengths[1:], 1):
+            if idx < cumulative_length:
+                dataset_idx = i - 1
+                break
+        
+        # Calculate local index within the specific dataset
+        local_idx = idx - self.cumulative_lengths[dataset_idx]
+        
+        # Get the sample from the appropriate dataset
+        return self.datasets[dataset_idx][local_idx]
+    
+    def get_dataset_info(self):
+        """
+        Get information about the loaded datasets.
+        
+        Returns:
+            dict: Information about each dataset including name, length, and cumulative ranges
+        """
+        info = {}
+        for i, name in enumerate(self.dataset_names[:len(self.datasets)]):
+            info[name] = {
+                'length': self.dataset_lengths[i],
+                'start_idx': self.cumulative_lengths[i],
+                'end_idx': self.cumulative_lengths[i + 1] - 1
+            }
+        return info
+
+
+
+if __name__ == "__main__":
+    # Example usage
+    dataset = BaseDataset(
+        root="./datasets_with_standard_labels/UTKFace",
+        transform=None,  # Add any transforms if needed
+        split="test"
+    )
+    
+    print(f"Total samples in multi-dataset: {len(dataset)}")
+    for i in range(len(dataset)):
+        image, label = dataset[i]
+        print(f"Sample {i}: Image shape , Label {label}")
+        if i == 50:
+            break
