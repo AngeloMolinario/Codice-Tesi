@@ -86,7 +86,7 @@ class BaseDataset(Dataset):
         self.root = root
         self.transform = transform
         self.split = split
-        
+        self.base_root = root.split("datasets_with_standard_labels")[0]
         # Path to the split folder (train or test)
         self.split_path = os.path.join(root, split)
         
@@ -112,7 +112,7 @@ class BaseDataset(Dataset):
 
     def __getitem__(self, idx):
         # Load an image and its corresponding label
-        img_path = self.paths[idx].replace("\\","/")+".jpg"
+        img_path = os.path.join(self.base_root, self.paths[idx].replace("\\","/")+".jpg")
         image = Image.open(img_path).convert('RGB')
         
         # Apply transforms if provided
