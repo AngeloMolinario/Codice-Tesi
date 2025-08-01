@@ -30,11 +30,11 @@ class PECore(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
         self.dtype = self.text_model.token_embedding.weight.dtype  # Get the dtype from the text model
 
-    def encode_image(self, image, normalize: bool = False):
+    def get_image_features(self, image, normalize: bool = False):
         x = self.visual(image)
         return F.normalize(x, dim=-1) if normalize else x
 
-    def encode_text(self, text, normalize: bool = False):
+    def get_text_features(self, text, normalize: bool = False):
         x = self.text_model(text)
         return F.normalize(x, dim=-1) if normalize else x
 
@@ -44,10 +44,10 @@ class PECore(nn.Module):
         text: Optional[torch.Tensor] = None,
     ):
         image_features = (
-            self.encode_image(image, normalize=True) if image is not None else None
+            self.get_image_features(image, normalize=True) if image is not None else None
         )
         text_features = (
-            self.encode_text(text, normalize=True) if text is not None else None
+            self.get_text_features(text, normalize=True) if text is not None else None
         )
         return image_features, text_features, self.logit_scale.exp()
     

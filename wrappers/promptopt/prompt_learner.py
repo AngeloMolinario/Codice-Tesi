@@ -278,7 +278,8 @@ class CustomModel(nn.Module):
         prompts = self.task_prompt_learner()                                # Create the prompt for the task using the task prompt learner
         task_tokenized_prompts = self.task_tokenized_prompts                # Get the tokenized prompts for the task
 
-        # TODO: check on the git implemetation the use of task_tokenized_prompts
+        # DONE: check on the git implemetation the use of task_tokenized_prompts
+        # task tokenized prompts are the token computed over the task name and the context placeholders
         task_features = self.text_encoder.prompt_forward(prompts, task_tokenized_prompts)  # Compute the task features using the text encoder and the tokenized prompts
 
         
