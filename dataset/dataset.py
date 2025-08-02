@@ -121,9 +121,9 @@ class BaseDataset(Dataset):
         # Create label dictionary with all attributes (missing values are -1)
         # Age is now returned as age group instead of raw age
         label = {
-            'gender': torch.tensor(self.genders[idx]),
-            'age': torch.tensor(self.age_groups[idx]),
-            'emotion': torch.tensor(self.emotions[idx])
+            'gender': torch.tensor(self.genders[idx], dtype=torch.long),
+            'age': torch.tensor(self.age_groups[idx], dtype=torch.long),
+            'emotion': torch.tensor(self.emotions[idx], dtype=torch.long)
         }
         
         return image, label

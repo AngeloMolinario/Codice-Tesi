@@ -1,5 +1,5 @@
 {
-    "USE_TQDM": false,
+    "USE_TQDM": true,
     "BATCH_SIZE": 80,
     "NUM_WORKERS": 6,
     "EPOCHS": 1,
