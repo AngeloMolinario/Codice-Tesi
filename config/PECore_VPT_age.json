@@ -21,8 +21,7 @@
     "NUM_VISUAL_PROMPTS": 50,
     "DATASET_NAMES": ["VggFace2","FairFace"],
     "DATASET_ROOT": "../datasets_with_standard_labels",
-    "TRAIN_SPLIT": 0.7,
-    "VAL_SPLIT": 0.3,
+    "TRAIN_SPLIT": 0.9,    
     "SEED" : 2025,
     "OUTPUT_DIR": "../TRAINING_OUTPUT/PECore_VPT_age/",
     "NAMED_TRAINABLE_PARAMETERS":[
