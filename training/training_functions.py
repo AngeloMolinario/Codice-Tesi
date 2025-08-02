@@ -22,9 +22,12 @@ def _specific_task_train_epoch(model, optmizer, dataloader, losses, task_name, d
         labels = labels[task_name].to(device)
 
         # Forward pass
-        if text_features is None:
-            text_features = model.get_text_features(labels, normalize=True)
-        
+        if text_features is None:                
+            # The only possible case where text_features is None is when we train the softCPT so
+            # the get_text_features method don't need the text parameters as the text features
+            # are dinamically generated from the init task names and classes names.
+            text_features = model.get_text_features(normalize=True)
+    
         image_features = model.get_image_features(image, normalize=True)
 
         logits  = model.logit_scale.exp() * (image_features @ text_features.t())        
@@ -43,10 +46,10 @@ def _specific_task_train_epoch(model, optmizer, dataloader, losses, task_name, d
         
         # Print progress only if not using tqdm
         if not use_tqdm:
-            batch_accuracy = (predicted == labels).float().mean().item()
             if batch_idx % 20 == 0:
-                print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}, Batch Accuracy: {batch_accuracy:.4f}", end='\r')
-    
+                print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
+
+
     epoch_accuracy = total_correct / total_samples  # Accuratezza media su tutto il dataset
     return epoch_loss / len(dataloader), epoch_accuracy
     
@@ -60,7 +63,8 @@ def _specific_task_val_epoch(model, dataloader, losses, task_name, device, text_
     epoch_loss = torch.tensor(0.0, device=device)
     total_correct = 0
     total_samples = 0
-    
+    all_labels = []
+    all_preds = []
     # Use tqdm if requested, otherwise use regular enumerate
     iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation") if use_tqdm else enumerate(dataloader)
     
@@ -85,14 +89,17 @@ def _specific_task_val_epoch(model, dataloader, losses, task_name, device, text_
             epoch_loss += loss.detach().item()
             total_correct += (predicted == labels).sum().item()  # Somma totale delle predizioni corrette
             total_samples += labels.size(0)  # Numero totale di campioni
+            
+            all_labels.append(labels.cpu())
+            all_preds.append(predicted.cpu())
 
             # Print progress only if not using tqdm
             if not use_tqdm:
                 if batch_idx % 25 == 0:
-                    print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r')
+                    print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)            
 
     epoch_accuracy = total_correct / total_samples  # Accuratezza media su tutto il dataset
-    return epoch_loss / len(dataloader), epoch_accuracy
+    return epoch_loss / len(dataloader), epoch_accuracy, all_preds, all_labels
 
 
 def multitask_epoch_val():
