@@ -1,6 +1,7 @@
 import torch
 import os
 from tqdm import tqdm
+from matplotlib import pyplot as plt
 
 from dataset.dataset import BaseDataset, MultiDataset
 from wrappers.PerceptionEncoder.pe import PECore
@@ -48,7 +49,8 @@ def _specific_task_train_epoch(model, optmizer, dataloader, losses, task_name, d
         if not use_tqdm:
             if batch_idx % 20 == 0:
                 print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
-
+        if batch_idx == 200:
+            break
 
     epoch_accuracy = total_correct / total_samples  # Accuratezza media su tutto il dataset
     return epoch_loss / len(dataloader), epoch_accuracy
@@ -175,3 +177,38 @@ def get_task_loss_fn(task, num_classes=None):
     if task == 'age':
         return AgeOrdinalLoss(num_classes=num_classes)
     return CrossEntropyLoss()
+
+
+
+def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses,
+                training_accuracies, validation_ordinal_accuracies, validation_ce_accuracies):
+    print("Plotting and saving training curves...")
+    os.makedirs('output/plot', exist_ok=True)
+
+    # Plot Losses
+    plt.figure(figsize=(10, 6))
+    plt.plot(training_losses, label='Training Loss')
+    plt.plot(validation_ordinal_losses, label='Validation Ordinal Loss')
+    plt.plot(validation_ce_losses, label='Validation CE Loss')
+    plt.title('Losses vs. Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig('output/plot/losses_curve.png')
+    plt.close()
+
+    # Plot Accuracies
+    plt.figure(figsize=(10, 6))
+    plt.plot(training_accuracies, label='Training Accuracy')
+    plt.plot(validation_ordinal_accuracies, label='Validation Ordinal Accuracy')
+    plt.plot(validation_ce_accuracies, label='Validation CE Accuracy')
+    plt.title('Accuracy vs. Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig('output/plot/accuracies_curve.png')
+    plt.close()
+
+    print("Training curves saved in 'output/plot'.")
