@@ -16,10 +16,10 @@ from utils.metric import TrainingMetrics
 
 # TODO: Add a json or yaml configuration file to store these parameters
 USE_TQDM = False
-BATCH_SIZE = 80
-NUM_WORKERS = 6
-EPOCHS = 25
-LR = 0.00001
+BATCH_SIZE = 32
+NUM_WORKERS = 8
+EPOCHS = 2
+LR = 0.001
 TASK = 'age'
 MODEL_TYPE = 'VPT'
 CLASSES = ['0-2', '3-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70+']
