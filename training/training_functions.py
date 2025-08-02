@@ -210,7 +210,7 @@ def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses
     plt.ylabel('Accuracy')
     plt.legend()
     plt.grid(True)
-    plt.savefig(f'{output_dir}/accuracies_curve.png')
+    plt.savefig(f'{output_dir}/plot/accuracies_curve.png')
     plt.close()
 
     print(f"Training curves saved in '{output_dir}'.")
