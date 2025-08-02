@@ -1,8 +1,8 @@
 import os
 import json
 import torch
+import shutil
 from torch.utils.data import random_split
-
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
@@ -19,8 +19,9 @@ from utils.configuration import Config
 
 
 # Load configuration from JSON file
-config = Config('config/PECore_VPT_age.json')
-# Set a generator 
+configuration_path = 'config/PECore_VPT_age.json'
+config = Config(configuration_path)
+# Set a generator
 generator = torch.Generator().manual_seed(config.SEED)
 
 
@@ -28,8 +29,8 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {DEVICE}")
 print(f"Loaded configuration: {config}")
 
-with open(f'{config.OUTPUT_DIR}/training_configuration.json', 'w') as f:
-    json.dump(config.to_dict(), f, indent=4)
+os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+shutil.copy2(configuration_path, f'{config.OUTPUT_DIR}/training_configuration.json')
 
 model = get_model(config).to(DEVICE)
 if torch.__version__[0] == '2':
@@ -46,8 +47,7 @@ optimizer = None
 params = []
 total_trainable_params = 0
 for name, param in model.named_parameters():
-
-    if name in config.NAMED_TRAINABLE_PARAMETERS:
+    if any(trainable_param in name for trainable_param in config.NAMED_TRAINABLE_PARAMETERS):
         param.requires_grad = True
         params += [param]
         total_trainable_params += param.numel()
