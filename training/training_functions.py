@@ -186,7 +186,7 @@ def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses
                 output_dir):
     print("Plotting and saving training curves...")
     os.makedirs('output/plot', exist_ok=True)
-
+    
     # Plot Losses
     plt.figure(figsize=(10, 6))
     plt.plot(training_losses, label='Training Loss')
@@ -197,7 +197,7 @@ def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses
     plt.ylabel('Loss')
     plt.legend()
     plt.grid(True)
-    plt.savefig('output/plot/losses_curve.png')
+    plt.savefig(f'{output_dir}/plot/losses_curve.png')
     plt.close()
 
     # Plot Accuracies
@@ -210,7 +210,7 @@ def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses
     plt.ylabel('Accuracy')
     plt.legend()
     plt.grid(True)
-    plt.savefig('output/plot/accuracies_curve.png')
+    plt.savefig(f'{output_dir}/accuracies_curve.png')
     plt.close()
 
-    print("Training curves saved in 'output/plot'.")
+    print(f"Training curves saved in '{output_dir}'.")
