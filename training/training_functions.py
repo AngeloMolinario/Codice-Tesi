@@ -108,7 +108,7 @@ def multitask_epoch_val():
     raise NotImplementedError("Multitask validation is not implemented yet.")
 
 
-def get_model(model_type: ['softCPT', 'VPT', 'Base'], num_prompt=0, tasknames=None, classnames=None):
+def get_model(cfg):
     '''
     Returns a model instance based on the specified type and number of prompts
     if type is 'softCPT', it returns a SoftCPT model with the specified number of prompts for the text tuning, with 0 Visual prompts.
@@ -116,23 +116,23 @@ def get_model(model_type: ['softCPT', 'VPT', 'Base'], num_prompt=0, tasknames=No
     if type is 'Base', it returns a Base model with no prompts.
     '''
     model = None
-    if model_type == 'softCPT':
+    if cfg.MODEL_TYPE == 'softCPT':
         base_model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=0)
 
         model = CustomModel(
-            n_ctx=num_prompt,
-            tasknames=tasknames,
-            classnames=classnames,
+            n_ctx=cfg.NUM_TEXT_PROMPTS,
+            tasknames=cfg.TASK_NAMES,
+            classnames=cfg.CLASSES,
             model=base_model,
             tokenizer=transforms.get_text_tokenizer(base_model.text_model.context_length)
         )
-    elif model_type == 'VPT':
-        model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=num_prompt)
-    
-    elif model_type == 'Base':
+    elif cfg.MODEL_TYPE == 'VPT':
+        model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=cfg.NUM_VISUAL_PROMPTS)
+
+    elif cfg.MODEL_TYPE == 'Base':
         model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=0)
     else:
-        raise ValueError(f"Unknown model type: {model_type}")
+        raise ValueError(f"Unknown model type: {cfg.MODEL_TYPE}")
 
     return model
 
@@ -153,7 +153,8 @@ def get_datasets(dataset_names, split='train', transforms=None, dataset_root="..
             dataset_names=dataset_names,
             split=split,
             transform=transforms,
-            datasets_root=dataset_root
+            datasets_root=dataset_root,
+            all_datasets = len(dataset_names) == 0
         )    
     
     return dataset
@@ -177,11 +178,12 @@ def get_task_loss_fn(task, num_classes=None):
     if task == 'age':
         return AgeOrdinalLoss(num_classes=num_classes)
     return CrossEntropyLoss()
-
+    
 
 
 def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses,
-                training_accuracies, validation_ordinal_accuracies, validation_ce_accuracies):
+                training_accuracies, validation_ordinal_accuracies, validation_ce_accuracies,
+                output_dir):
     print("Plotting and saving training curves...")
     os.makedirs('output/plot', exist_ok=True)
 

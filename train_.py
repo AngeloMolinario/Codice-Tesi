@@ -1,5 +1,8 @@
 import os
 import json
+import torch
+from torch.utils.data import random_split
+
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
@@ -11,40 +14,24 @@ from training.loss import *
 from core.vision_encoder import transforms
 from training.training_functions import *
 from utils.metric import TrainingMetrics
-# This file contains the implementation for age classification testing using a PECore model.
+from utils.configuration import Config
 
 
-# TODO: Add a json or yaml configuration file to store these parameters
-USE_TQDM = False
-BATCH_SIZE = 80
-NUM_WORKERS = 6
-EPOCHS = 10
-LR = 0.0001
-TASK = 'age'
-MODEL_TYPE = 'VPT'
-CLASSES = ['0-2', '3-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70+']
-TEXT_CLASSES_PROMPT = [
-    "A photo of a person between 0 and 2 years old",
-    "A photo of a person between 3 and 9 years old",
-    "A photo of a person between 10 and 19 years old",
-    "A photo of a person between 20 and 29 years old",
-    "A photo of a person between 30 and 39 years old",
-    "A photo of a person between 40 and 49 years old",
-    "A photo of a person between 50 and 59 years old",
-    "A photo of a person between 60 and 69 years old",
-    "A photo of a person with more than 70 years old"
-    ]
 
-NUM_VISUAL_PROMPTS = 10
-DATASET_NAMES = ["FairFace"]
-DATASET_ROOT = "../datasets_with_standard_labels"
+# Load configuration from JSON file
+config = Config('config/PECore_VPT_age.json')
+# Set a generator 
+generator = torch.Generator().manual_seed(config.SEED)
+
+
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {DEVICE}")
-# TODO: add the training validation splitting logic
-TRAIN_SPLIT = 0.8
-VAL_SPLIT = 1-TRAIN_SPLIT
+print(f"Loaded configuration: {config}")
 
-model = get_model(MODEL_TYPE, num_prompt=NUM_VISUAL_PROMPTS).to(DEVICE)
+with open(f'{config.OUTPUT_DIR}/training_configuration.json', 'w') as f:
+    json.dump(config.to_dict(), f, indent=4)
+
+model = get_model(config).to(DEVICE)
 if torch.__version__[0] == '2':
     print("Compiling model with torch.compile...")
     model = torch.compile(model, mode="max-autotune")
@@ -53,50 +40,46 @@ tokenizer = transforms.get_text_tokenizer(model.text_model.context_length)
 img_transform = transforms.get_image_transform(model.image_size)
 
 
-loss_fn = get_task_loss_fn(TASK, num_classes=len(CLASSES))
+loss_fn = get_task_loss_fn(config.TASK, num_classes=len(config.CLASSES))
 
 optimizer = None
-if MODEL_TYPE == 'VPT':
-    params = []
-    total_trainable_params = 0
-    for name, param in model.named_parameters():
-        
-        if "prompt_learner" in name:
-            param.requires_grad = True
-            params += [param]
-            total_trainable_params += param.numel()
-            print(f"Parameter: {name}, shape: {param.shape}, numel: {param.numel()}")
-        elif "logit_scale" in name:
-            param.requires_grad = True
-            params += [param]
-            total_trainable_params += param.numel()
-            print(f"Parameter: {name}, shape: {param.shape}, numel: {param.numel()}")
-        else:
-            param.requires_grad = False
-#        print(f"Parameter: {name}, requires_grad: {param.requires_grad}")
+params = []
+total_trainable_params = 0
+for name, param in model.named_parameters():
 
-    optimizer = torch.optim.AdamW(params, lr=LR)
-    print(f"Trainable parameter objects: {len(params)}")
-    print(f"Total trainable parameter values: {total_trainable_params}")
+    if name in config.NAMED_TRAINABLE_PARAMETERS:
+        param.requires_grad = True
+        params += [param]
+        total_trainable_params += param.numel()
+        print(f"Parameter: {name}, shape: {param.shape}, numel: {param.numel()}")        
+    else:
+        param.requires_grad = False
+
+optimizer = torch.optim.AdamW(params, lr=config.LR)
+print(f"Trainable parameter objects: {len(params)}")
+print(f"Total trainable parameter values: {total_trainable_params}")
 
 
 
-dataset = get_datasets(DATASET_NAMES, transforms=img_transform, split="train", dataset_root=DATASET_ROOT)
-testing_dataset = get_datasets(['UTKFace'], transforms=img_transform, split="test", dataset_root=DATASET_ROOT)
+dataset = get_datasets(config.DATASET_NAMES, transforms=img_transform, split="train", dataset_root=config.DATASET_ROOT)
+train_size = int(config.TRAIN_SPLIT * len(dataset))
+val_size = len(dataset) - train_size
 
-data_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS, persistent_workers=True, pin_memory=True if DEVICE=='cuda' else False)
-test_loader = DataLoader(testing_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, persistent_workers=True, pin_memory=True if DEVICE=='cuda' else False)
+training_dataset, validation_dataset = random_split(dataset, [train_size, val_size], generator=generator)
+
+training_loader = DataLoader(training_dataset, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True if DEVICE=='cuda' else False)
+validation_loader = DataLoader(validation_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True if DEVICE=='cuda' else False)
 
 text_features = None
-if MODEL_TYPE !=  "SoftCPT":
-    print("Encoding text features for age classification...")
-    texts = tokenizer(TEXT_CLASSES_PROMPT).to(DEVICE)
+if config.MODEL_TYPE !=  "SoftCPT":
+    print(f"Encoding text features for {config.TASK} classification...")
+    texts = tokenizer(config.TEXT_CLASSES_PROMPT).to(DEVICE)
     with torch.no_grad():
         text_features = model.get_text_features(texts, normalize=True)
     print(f"Encoded text features shape: {text_features.shape}")
 
-epoch_train_fn = get_training_step_fn(TASK)
-epoch_val_fn   = get_validation_step_fn(TASK)
+epoch_train_fn = get_training_step_fn(config.TASK)
+epoch_val_fn   = get_validation_step_fn(config.TASK)
 
 training_losses = []
 training_accuracies = []
@@ -105,15 +88,15 @@ validation_ordinal_accuracies = []
 validation_ce_losses = []
 validation_ce_accuracies = []
 
-metrics_tracker = TrainingMetrics(output_dir='output/metrics', class_names=CLASSES)
+metrics_tracker = TrainingMetrics(output_dir=f'{config.OUTPUT_DIR}/metrics', class_names=config.CLASSES)
 
-epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, loss_fn, TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
+epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
 print(f"Validation Loss ORDINAL BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
 metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
 metrics_tracker.plot_confusion_matrix(epoch='initial_ORDINAL')
 metrics_tracker.reset_predictions()
 
-epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, CrossEntropyLoss(), TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
+epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
 print(f"Validation Loss CE BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
 
 metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
@@ -125,10 +108,10 @@ epochs_no_improve = 0
 best_val_loss = float('inf')
 early_stop = False
 
-for epoch in range(EPOCHS):
-    print(f"Epoch {epoch+1}/{EPOCHS}")    
+for epoch in range(config.EPOCHS):
+    print(f"Epoch {epoch+1}/{config.EPOCHS}")    
     ########### TRAINING STEP ###########
-    epoch_loss, epoch_accuracy = epoch_train_fn(model, optimizer, data_loader, loss_fn, TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
+    epoch_loss, epoch_accuracy = epoch_train_fn(model, optimizer, data_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
     training_losses.append(epoch_loss.item())
     training_accuracies.append(epoch_accuracy)   
     print(f"Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
@@ -137,9 +120,9 @@ for epoch in range(EPOCHS):
     ############ VALIDATION STEP ###########
     print("Performing validation...")
 
-    if TASK == 'age':
+    if config.TASK == 'age':
         # Also validate with CrossEntropyLoss for age classification
-        epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, CrossEntropyLoss(), TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
+        epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
         print(f"Validation Loss CE: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
 
         # Store validation losses and accuracies
@@ -151,7 +134,7 @@ for epoch in range(EPOCHS):
         metrics_tracker.plot_metrics()
 
 
-    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, loss_fn, TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
+    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
     print(f"Validation Loss ORDINAL: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
     # Store validation losses and accuracies
 
@@ -173,8 +156,8 @@ for epoch in range(EPOCHS):
             best_val_loss = epoch_loss.item()
             epochs_no_improve = 0
             # Save the best model weights
-            os.makedirs('output/ckpt', exist_ok=True)
-            torch.save(model.state_dict(), 'output/ckpt/best_model.pth')
+            os.makedirs(f'{config.OUTPUT_DIR}/ckpt', exist_ok=True)
+            torch.save(model.state_dict(), f'{config.OUTPUT_DIR}/ckpt/best_model.pth')
             print("Validation loss improved, saving model.")
         else:
             epochs_no_improve += 1
@@ -188,7 +171,7 @@ for epoch in range(EPOCHS):
             break
 
     # Save model state dict
-    torch.save(model.state_dict(), 'output/ckpt/latest_model.pth')
+    torch.save(model.state_dict(), f'{config.OUTPUT_DIR}/ckpt/latest_model.pth')
 
     # Save training state in a JSON file
     training_state = {
@@ -202,7 +185,7 @@ for epoch in range(EPOCHS):
         'validation_ce_losses': validation_ce_losses,
         'validation_ce_accuracies': validation_ce_accuracies
     }
-    with open('output/ckpt/training_state.json', 'w') as f:
+    with open(f'{config.OUTPUT_DIR}/ckpt/training_state.json', 'w') as f:
         json.dump(training_state, f, indent=4)
 
     # Plotting and saving the training curves
@@ -212,7 +195,8 @@ for epoch in range(EPOCHS):
         validation_ce_losses,
         training_accuracies,
         validation_ordinal_accuracies,
-        validation_ce_accuracies
+        validation_ce_accuracies,
+        config.OUTPUT_DIR
     )
 
 plot_losses(
@@ -221,5 +205,6 @@ plot_losses(
     validation_ce_losses,
     training_accuracies,
     validation_ordinal_accuracies,
-    validation_ce_accuracies
+    validation_ce_accuracies,
+    config.OUTPUT_DIR
 )

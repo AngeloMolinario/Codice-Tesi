@@ -1,0 +1,20 @@
+{
+    "USE_TQDM": false,
+    "BATCH_SIZE": 80,
+    "NUM_WORKERS": 6,
+    "EPOCHS": 10,
+    "LR": 0.0001,
+    "TASK": "gender",
+    "MODEL_TYPE": "VPT",
+    "CLASSES": ["male", "female"],
+    "TEXT_CLASSES_PROMPT": [
+        "A photo of a male",
+        "A photo of a female"
+    ],
+    "NUM_VISUAL_PROMPTS": 10,
+    "DATASET_NAMES": ["FairFace"],
+    "DATASET_ROOT": "../datasets_with_standard_labels",
+    "TRAIN_SPLIT": 0.8,
+    "VAL_SPLIT": 0.2,
+    "SEED" : 2025
+}
