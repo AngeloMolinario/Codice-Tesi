@@ -34,23 +34,23 @@ def map_age_to_group(age):
         age_str = str(age).lower()
         if "-" in age_str or "more" in age_str:
             # Age is already categorized, map to appropriate group
-            if "0-2" in age_str:
+            if "0-2" == age_str:
                 return 0
-            elif "3-9" in age_str:
+            elif "3-9" == age_str:
                 return 1
-            elif "10-19" in age_str:
+            elif "10-19" == age_str:
                 return 2
-            elif "20-29" in age_str:
+            elif "20-29" == age_str:
                 return 3
-            elif "30-39" in age_str:
+            elif "30-39" == age_str:
                 return 4
-            elif "40-49" in age_str:
+            elif "40-49" == age_str:
                 return 5
-            elif "50-59" in age_str:
+            elif "50-59" == age_str:
                 return 6
-            elif "60-69" in age_str:
+            elif "60-69" == age_str:
                 return 7
-            elif "70" in age_str and ("more" in age_str or "+" in age_str):
+            elif "70" in age_str or ("more" in age_str or "+" in age_str):
                 return 8
             else:
                 return -1  # Unknown category format
@@ -103,7 +103,6 @@ class BaseDataset(Dataset):
         # Process ages: convert to age groups
         raw_ages = self.data['Age'].fillna(-1).values
         self.age_groups = [map_age_to_group(age) for age in raw_ages]
-        
         self.emotions = self.data['Facial Emotion'].fillna(-1).values
 
     def __len__(self):
