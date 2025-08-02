@@ -28,5 +28,6 @@
     "NAMED_TRAINABLE_PARAMETERS":[
         "prompt_learner",
         "logit_scale"
-    ]
+    ],
+    "EARLY_STOPPING_PATIENCE": 5
 }

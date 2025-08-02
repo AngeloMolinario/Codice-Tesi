@@ -47,7 +47,7 @@ params = []
 total_trainable_params = 0
 for name, param in model.named_parameters():
 
-    if name in config.NAMED_TRAINABLE_PARAMETERS:
+    if any(trainable_param in name for trainable_param in config.NAMED_TRAINABLE_PARAMETERS):
         param.requires_grad = True
         params += [param]
         total_trainable_params += param.numel()
@@ -90,20 +90,20 @@ validation_ce_accuracies = []
 
 metrics_tracker = TrainingMetrics(output_dir=f'{config.OUTPUT_DIR}/metrics', class_names=config.CLASSES)
 
-epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
+epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
 print(f"Validation Loss ORDINAL BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
 metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
 metrics_tracker.plot_confusion_matrix(epoch='initial_ORDINAL')
 metrics_tracker.reset_predictions()
+if config.TASK == 'age':
+    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
+    print(f"Validation Loss CE BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
 
-epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
-print(f"Validation Loss CE BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
+    metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
+    metrics_tracker.plot_confusion_matrix(epoch='initial_CE')
+    metrics_tracker.reset_predictions()
 
-metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
-metrics_tracker.plot_confusion_matrix(epoch='initial_CE')
-metrics_tracker.reset_predictions()
-
-patience = 5
+patience = config.EARLY_STOPPING_PATIENCE
 epochs_no_improve = 0
 best_val_loss = float('inf')
 early_stop = False
@@ -111,7 +111,7 @@ early_stop = False
 for epoch in range(config.EPOCHS):
     print(f"Epoch {epoch+1}/{config.EPOCHS}")    
     ########### TRAINING STEP ###########
-    epoch_loss, epoch_accuracy = epoch_train_fn(model, optimizer, data_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
+    epoch_loss, epoch_accuracy = epoch_train_fn(model, optimizer, training_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
     training_losses.append(epoch_loss.item())
     training_accuracies.append(epoch_accuracy)   
     print(f"Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
@@ -122,7 +122,7 @@ for epoch in range(config.EPOCHS):
 
     if config.TASK == 'age':
         # Also validate with CrossEntropyLoss for age classification
-        epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
+        epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
         print(f"Validation Loss CE: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
 
         # Store validation losses and accuracies
@@ -134,7 +134,7 @@ for epoch in range(config.EPOCHS):
         metrics_tracker.plot_metrics()
 
 
-    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
+    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
     print(f"Validation Loss ORDINAL: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
     # Store validation losses and accuracies
 
