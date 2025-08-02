@@ -16,10 +16,10 @@ from utils.metric import TrainingMetrics
 
 # TODO: Add a json or yaml configuration file to store these parameters
 USE_TQDM = False
-BATCH_SIZE = 32
-NUM_WORKERS = 8
-EPOCHS = 2
-LR = 0.001
+BATCH_SIZE = 80
+NUM_WORKERS = 6
+EPOCHS = 10
+LR = 0.0001
 TASK = 'age'
 MODEL_TYPE = 'VPT'
 CLASSES = ['0-2', '3-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70+']
@@ -127,35 +127,43 @@ early_stop = False
 
 for epoch in range(EPOCHS):
     print(f"Epoch {epoch+1}/{EPOCHS}")    
+    ########### TRAINING STEP ###########
     epoch_loss, epoch_accuracy = epoch_train_fn(model, optimizer, data_loader, loss_fn, TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
     training_losses.append(epoch_loss.item())
     training_accuracies.append(epoch_accuracy)   
     print(f"Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
 
 
-    ######
-    print(f"Training loss type: {type(epoch_loss)} - Accuracy type: {type(epoch_accuracy)}")
-    ######
-
+    ############ VALIDATION STEP ###########
     print("Performing validation...")
+
+    if TASK == 'age':
+        # Also validate with CrossEntropyLoss for age classification
+        epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, CrossEntropyLoss(), TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
+        print(f"Validation Loss CE: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
+
+        # Store validation losses and accuracies
+        validation_ce_losses.append(epoch_loss.item())
+        validation_ce_accuracies.append(epoch_accuracy)    
+        metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
+        metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}_CE")
+        metrics_tracker.reset_predictions()
+        metrics_tracker.plot_metrics()
+
+
     epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, loss_fn, TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
+    print(f"Validation Loss ORDINAL: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
+    # Store validation losses and accuracies
+
     validation_ordinal_losses.append(epoch_loss.item())
     validation_ordinal_accuracies.append(epoch_accuracy)
-    print(f"Validation Loss ORDINAL: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
-
     metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
     metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}_ORDINAL")
     metrics_tracker.reset_predictions()
     metrics_tracker.plot_metrics()
 
-    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, test_loader, CrossEntropyLoss(), TASK, DEVICE, text_features, use_tqdm=USE_TQDM)
-    validation_ce_losses.append(epoch_loss.item())
-    validation_ce_accuracies.append(epoch_accuracy)
-    print(f"Validation Loss CE: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
-    metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
-    metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}_CE")
-    metrics_tracker.reset_predictions()
-    metrics_tracker.plot_metrics()
+
+    
 
 
     # Early stopping check
@@ -197,35 +205,21 @@ for epoch in range(EPOCHS):
     with open('output/ckpt/training_state.json', 'w') as f:
         json.dump(training_state, f, indent=4)
 
-# Plotting and saving the training curves
-print("Plotting and saving training curves...")
-os.makedirs('output/plot', exist_ok=True)
+    # Plotting and saving the training curves
+    plot_losses(
+        training_losses,
+        validation_ordinal_losses,
+        validation_ce_losses,
+        training_accuracies,
+        validation_ordinal_accuracies,
+        validation_ce_accuracies
+    )
 
-# Plot Losses
-plt.figure(figsize=(10, 6))
-plt.plot(training_losses, label='Training Loss')
-plt.plot(validation_ordinal_losses, label='Validation Ordinal Loss')
-plt.plot(validation_ce_losses, label='Validation CE Loss')
-plt.title('Losses vs. Epochs')
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.legend()
-plt.grid(True)
-plt.savefig('output/plot/losses_curve.png')
-plt.close()
-
-# Plot Accuracies
-plt.figure(figsize=(10, 6))
-plt.plot(training_accuracies, label='Training Accuracy')
-plt.plot(validation_ordinal_accuracies, label='Validation Ordinal Accuracy')
-plt.plot(validation_ce_accuracies, label='Validation CE Accuracy')
-plt.title('Accuracy vs. Epochs')
-plt.xlabel('Epochs')
-plt.ylabel('Accuracy')
-plt.legend()
-plt.grid(True)
-plt.savefig('output/plot/accuracies_curve.png')
-plt.close()
-
-print("Training curves saved in 'output/plot'.")
-
+plot_losses(
+    training_losses,
+    validation_ordinal_losses,
+    validation_ce_losses,
+    training_accuracies,
+    validation_ordinal_accuracies,
+    validation_ce_accuracies
+)
