@@ -1,8 +1,6 @@
 .env_win
 hf_models
 __pycache__
-core
-.json
 test_result
 *.xlsx
 datasets_with_standard_labels
