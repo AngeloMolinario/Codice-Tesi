@@ -130,7 +130,7 @@ class BaseDataset(Dataset):
 
 
 class MultiDataset(Dataset):
-    def __init__(self, dataset_names, transform=None, split="train", datasets_root="datasets_with_standard_labels"):
+    def __init__(self, dataset_names, transform=None, split="train", datasets_root="datasets_with_standard_labels", all_datasets=False):
         """
         Initialize MultiDataset with multiple datasets.
         
@@ -139,27 +139,41 @@ class MultiDataset(Dataset):
             transform: Optional transforms to apply to images
             split (str): Split to use ("train" or "test")
             datasets_root (str): Root directory containing all datasets
+            all_datasets: (bool): if True, load all datasets in the root directory and ignore dataset_names
         """
         self.dataset_names = dataset_names
         self.transform = transform
         self.split = split
         self.datasets_root = datasets_root
         
+        if all_datasets:
+            # If all_datasets is True, load all datasets in the root directory
+            self.dataset_names = [d for d in os.listdir(datasets_root) if os.path.isdir(os.path.join(datasets_root, d))]
+            print(f"Loading all datasets: {self.dataset_names}")
+
         # Load all datasets
         self.datasets = []
         self.dataset_lengths = []
         self.cumulative_lengths = [0]
+        successfully_loaded_datasets = []
         
-        for dataset_name in dataset_names:
+        for dataset_name in self.dataset_names:
             dataset_path = os.path.join(datasets_root, dataset_name)
-            try:
-                dataset = BaseDataset(root=dataset_path, transform=transform, split=split)
-                self.datasets.append(dataset)
-                self.dataset_lengths.append(len(dataset))
-                self.cumulative_lengths.append(self.cumulative_lengths[-1] + len(dataset))
-            except Exception as e:
-                print(f"Warning: Could not load dataset {dataset_name}: {e}")
-                continue
+            if os.path.exists(os.path.join(dataset_path, split)):    
+                try:
+                    dataset = BaseDataset(root=dataset_path, transform=transform, split=split)
+                    self.datasets.append(dataset)
+                    self.dataset_lengths.append(len(dataset))
+                    self.cumulative_lengths.append(self.cumulative_lengths[-1] + len(dataset))
+                    successfully_loaded_datasets.append(dataset_name)
+                    print(f"Loaded {len(dataset)} samples from {dataset_path}/{split}")
+                except Exception as e:
+                    print(f"Warning: Could not load dataset {dataset_name}: {e}")
+            else:
+                print(f"Warning: Split '{split}' not found in {dataset_path}")
+        
+        # Update dataset_names to only include successfully loaded datasets
+        self.dataset_names = successfully_loaded_datasets                           
         
         if not self.datasets:
             raise ValueError("No datasets could be loaded successfully")
@@ -168,8 +182,9 @@ class MultiDataset(Dataset):
         self.total_length = self.cumulative_lengths[-1]
         
         print(f"Loaded {len(self.datasets)} datasets with total {self.total_length} samples:")
-        for i, name in enumerate([name for name in dataset_names if i < len(self.datasets)]):
-            print(f"  - {name}: {self.dataset_lengths[i]} samples")
+        for i, dataset_name in enumerate(self.dataset_names):
+            if i < len(self.datasets):
+                print(f"  - {dataset_name}: {self.dataset_lengths[i]} samples")
 
     def __len__(self):
         return self.total_length
@@ -221,7 +236,7 @@ class MultiDataset(Dataset):
 if __name__ == "__main__":
     # Example usage
     dataset = BaseDataset(
-        root="./datasets_with_standard_labels/UTKFace",
+        root="../datasets_with_standard_labels/UTKFace",
         transform=None,  # Add any transforms if needed
         split="test"
     )
@@ -232,3 +247,25 @@ if __name__ == "__main__":
         print(f"Sample {i}: Image shape , Label {label}")
         if i == 50:
             break
+
+    dataset = MultiDataset(
+        dataset_names=["FairFace", "CelebA_HQ", "RAF-DB"],  # Adjust these names as needed
+        transform=None,  # Add any transforms if needed
+        split="train",
+        datasets_root="../datasets_with_standard_labels",
+        all_datasets=True  # Set to True to load all datasets in the root directory
+    )
+    print(f"MultiDataset loaded successfully! Total samples: {len(dataset)}")
+    for i in range(len(dataset)):
+        image, label = dataset[i]
+        print(f"Sample {i}: Label {label}")
+        if i == 50:
+            break
+    
+    print("Dataset information:")
+    try:
+        info = dataset.get_dataset_info()
+        for name, details in info.items():
+            print(f"{name}: {details}")
+    except Exception as e:
+        print(f"Error loading MultiDataset: {e}")
