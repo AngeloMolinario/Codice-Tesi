@@ -296,13 +296,9 @@ def compute_inverse_frequency(total, class_count, per_class_count):
 if __name__ == "__main__":
     NUM_THREADS = 2  # Adjust this number based on your system
     
-    datasetName = "FairFace"
+    datasetName = ""
     root_path = "./../datasets_with_standard_labels/"
-    dataset = BaseDataset(
-        root=os.path.join(root_path, datasetName),
-        split="train",
-        transform=None
-    )
+
     dataset = MultiDataset(
         dataset_names=[datasetName],
         transform=None,
