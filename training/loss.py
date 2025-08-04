@@ -30,7 +30,7 @@ class _WeightedAgeOrdinalLoss():
     def __init__(self, num_classes, ordinal_loss='mae', weights=None):
         self.num_classes = num_classes
         self.ordinal_loss = nn.L1Loss(reduction='none') if ordinal_loss == 'mae' else nn.MSELoss(reduction='none')
-        self.classes_range = torch.arange(num_classes).float()
+        self.classes_range = torch.arange(num_classes).unsqueeze(0).float()
 
         if weights is not None:
             self.class_weights = weights
@@ -40,7 +40,7 @@ class _WeightedAgeOrdinalLoss():
 
     def __call__(self, logit, true_labels, return_predicted_label=False):
         probabilities = torch.softmax(logit, dim=1)
-        expected_value = torch.sum(probabilities * self.classes_range.unsqueeze(0), dim=1).float()
+        expected_value = torch.sum(probabilities * self.classes_range, dim=1).float()
         predicted_label = torch.round(expected_value).long()
 
         # Calcola la perdita per esempio

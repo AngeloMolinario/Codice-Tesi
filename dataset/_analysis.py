@@ -1,6 +1,7 @@
 from dataset import  MultiDataset
 from tqdm import tqdm
 import os
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -293,6 +294,13 @@ def compute_inverse_frequency(total, class_count, per_class_count):
         return 0
     return total / (class_count * per_class_count)
 
+def compute_task_weights(age_counts, gender_counts, emotion_counts):
+
+    inverse_weight = [1/age_counts , 1/gender_counts, 1/emotion_counts]
+    sum_weights = sum(inverse_weight)
+    normalized_weights = [w / sum_weights for w in inverse_weight]
+    return normalized_weights
+
 if __name__ == "__main__":
     NUM_THREADS = 2  # Adjust this number based on your system
     
@@ -381,3 +389,53 @@ if __name__ == "__main__":
     print("Class weights for emotion distribution:")
     for key, value in emotion_class_weight.items():
         print(f"\t- {key}: {value:.4f}")
+    print()
+
+    print("#"*30, "TASK WEIGHTS", "#"*30)
+    task_weights = compute_task_weights(total_age, total_gender, total_emotion)
+    print(f"Age task weight: {task_weights[0]:.4f}")
+    print(f"Gender task weight: {task_weights[1]:.4f}")
+    print(f"Emotion task weight: {task_weights[2]:.4f}")
+
+
+    report = {
+        "analysis_info": {
+            "total_images": dataset_size,
+            "num_threads_used": NUM_THREADS,
+            "datasets_used": dataset.dataset_names,
+            "split": "train"
+        },
+        "dataset_info": dataset.get_dataset_info(),
+        "age_analysis": {
+            "total_samples_with_age": total_age,
+            "num_classes": age_class_count,
+            "distribution": final_age_distribution,
+            "class_weights": age_class_weight,
+            "task_weight": task_weights[0]
+        },
+        "gender_analysis": {
+            "total_samples_with_gender": total_gender,
+            "num_classes": gender_class_count,
+            "distribution": final_gender_distribution,
+            "class_weights": gender_class_weight,
+            "task_weight": task_weights[1]
+        },
+        "emotion_analysis": {
+            "total_samples_with_emotion": total_emotion,
+            "num_classes": emotion_class_count,
+            "distribution": final_emotion_distribution,
+            "class_weights": emotion_class_weight,
+            "task_weight": task_weights[2]
+        },
+        "task_weights": {
+            "age": task_weights[0],
+            "gender": task_weights[1], 
+            "emotion": task_weights[2]
+        }
+    }
+    
+    # Save JSON report
+    report_filename = f"dataset_analysis_report.json"
+    with open(report_filename, 'w', encoding='utf-8') as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+    
