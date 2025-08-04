@@ -12,6 +12,54 @@ from core.vision_encoder import transforms
 def _specific_task_train_epoch(model, optmizer, dataloader, losses, task_name, device, text_features=None, use_tqdm=False):
     model.train()
     epoch_loss = torch.tensor(0.0, device=device)
+    total_correct = torch.tensor(0, device=device)
+    total_samples = torch.tensor(0, device=device)
+
+    # Use tqdm if requested, otherwise use regular enumerate
+    iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Training") if use_tqdm else enumerate(dataloader)
+
+    for batch_idx, (image, labels) in iterator:
+        image = image.to(device)
+        labels = labels[task_name].to(device)
+
+        # Forward pass
+        if text_features is None:                
+            # The only possible case where text_features is None is when we train the softCPT so
+            # the get_text_features method don't need the text parameters as the text features
+            # are dinamically generated from the init task names and classes names.
+            text_features = model.get_text_features(normalize=True)
+    
+        image_features = model.get_image_features(image, normalize=True)
+
+        logits  = model.logit_scale.exp() * (image_features @ text_features.t())        
+
+        loss, predicted = losses(logits, labels, return_predicted_label=True)
+
+        # Backward pass and optimization
+        optmizer.zero_grad()
+        loss.backward()
+        optmizer.step()
+
+        # Update epoch metrics - mantieni tutto su GPU
+        epoch_loss += loss.detach()
+        total_correct += (predicted == labels).sum()
+        total_samples += labels.size(0)
+        
+        # Print progress only if not using tqdm
+        if not use_tqdm:
+            if batch_idx % 20 == 0:
+                print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
+
+    # Trasferimento su CPU solo alla fine per il calcolo finale
+    epoch_accuracy = (total_correct / total_samples).cpu().item()
+    epoch_loss = (epoch_loss / len(dataloader)).cpu()
+    
+    return epoch_loss, epoch_accuracy
+    
+
+def multitask_epoch_train():
+    model.train()
+    epoch_loss = torch.tensor(0.0, device=device)
     total_correct = 0
     total_samples = 0
 
@@ -20,7 +68,10 @@ def _specific_task_train_epoch(model, optmizer, dataloader, losses, task_name, d
 
     for batch_idx, (image, labels) in iterator:
         image = image.to(device)
-        labels = labels[task_name].to(device)
+        
+        age_t = labels['age'].to(device)
+        gender_t = labels['gender'].to(device)
+        emotion_t = labels['emotion'].to(device)
 
         # Forward pass
         if text_features is None:                
@@ -49,15 +100,9 @@ def _specific_task_train_epoch(model, optmizer, dataloader, losses, task_name, d
         if not use_tqdm:
             if batch_idx % 20 == 0:
                 print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
-        if batch_idx == 200:
-            break
 
     epoch_accuracy = total_correct / total_samples  # Accuratezza media su tutto il dataset
     return epoch_loss / len(dataloader), epoch_accuracy
-    
-
-def multitask_epoch_train():
-    raise NotImplementedError("Multitask training is not implemented yet.")
 
 #################### VALIDATION FUNCTIONS ####################
 def _specific_task_val_epoch(model, dataloader, losses, task_name, device, text_features=None, use_tqdm=False):
@@ -172,11 +217,11 @@ def get_validation_step_fn(task):
     return _specific_task_val_epoch
 
 
-def get_task_loss_fn(task, num_classes=None):
-    if task == 'multitask':
+def get_task_loss_fn(cfg):
+    if cfg.TASK == 'multitask':
         raise NotImplementedError("Multitask loss function is not implemented yet.")
-    if task == 'age':
-        return AgeOrdinalLoss(num_classes=num_classes)
+    if cfg.TASK == 'age':
+        return AgeOrdinalLoss(num_classes=len(cfg.CLASSES))
     return CrossEntropyLoss()
     
 
@@ -185,8 +230,8 @@ def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses
                 training_accuracies, validation_ordinal_accuracies, validation_ce_accuracies,
                 output_dir):
     print("Plotting and saving training curves...")
-    os.makedirs('output/plot', exist_ok=True)
-    
+    os.makedirs(f'{output_dir}/plot', exist_ok=True)
+
     # Plot Losses
     plt.figure(figsize=(10, 6))
     plt.plot(training_losses, label='Training Loss')
@@ -210,7 +255,7 @@ def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses
     plt.ylabel('Accuracy')
     plt.legend()
     plt.grid(True)
-    plt.savefig(f'{output_dir}/accuracies_curve.png')
+    plt.savefig(f'{output_dir}/plot/accuracies_curve.png')
     plt.close()
 
     print(f"Training curves saved in '{output_dir}'.")

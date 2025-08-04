@@ -58,28 +58,35 @@ def map_age_to_group(age):
     # If age is numeric, perform standard mapping
     try:
         age_num = float(age)
-        if 0 <= age_num <= 2:
+        
+        # Round to nearest integer if decimal >= 0.5
+        age_rounded = round(age_num)
+        
+        if 0 <= age_rounded <= 2:
             return 0
-        elif 3 <= age_num <= 9:
+        elif 3 <= age_rounded <= 9:
             return 1
-        elif 10 <= age_num <= 19:
+        elif 10 <= age_rounded <= 19:
             return 2
-        elif 20 <= age_num <= 29:
+        elif 20 <= age_rounded <= 29:
             return 3
-        elif 30 <= age_num <= 39:
+        elif 30 <= age_rounded <= 39:
             return 4
-        elif 40 <= age_num <= 49:
+        elif 40 <= age_rounded <= 49:
             return 5
-        elif 50 <= age_num <= 59:
+        elif 50 <= age_rounded <= 59:
             return 6
-        elif 60 <= age_num <= 69:
+        elif 60 <= age_rounded <= 69:
             return 7
-        elif age_num >= 70:
+        elif age_rounded >= 70:
             return 8
         else:
+            print(f"Warning: Age {age_num} (rounded to {age_rounded}) is out of expected range")
             return -1  # Invalid age
-    except (ValueError, TypeError):
-        return -1  # Cannot convert to numeric
+            
+    except (ValueError, TypeError) as e:
+        print(f"Warning: Cannot convert age '{age}' to float: {e}")
+        return -1  # Cannot convert to numeric  
 
 class BaseDataset(Dataset):
     def __init__(self, root:str, transform=None, split="train"):
@@ -97,7 +104,10 @@ class BaseDataset(Dataset):
         self.data = pd.read_csv(self.labels_path)
         
         # Extract relevant columns, handling missing values
-        self.paths = self.data['Path'].values
+        raw_paths = self.data['Path'].values
+        # Preprocessa tutti i path una sola volta
+        self.img_paths = [os.path.join(self.base_root, path.replace("\\","/")+".jpg") for path in raw_paths]
+        
         self.genders = self.data['Gender'].fillna(-1).values
         
         # Process ages: convert to age groups
@@ -107,11 +117,13 @@ class BaseDataset(Dataset):
 
     def __len__(self):
         # Return the number of images in the dataset
+        if len(self.data)> 300*1000:
+            return 300*1000  # Limit to 300k samples for performance
         return len(self.data)
 
     def __getitem__(self, idx):
         # Load an image and its corresponding label
-        img_path = os.path.join(self.base_root, self.paths[idx].replace("\\","/")+".jpg")
+        img_path = self.img_paths[idx]  # Path già preprocessato
         image = Image.open(img_path).convert('RGB')
         
         # Apply transforms if provided

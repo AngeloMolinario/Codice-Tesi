@@ -36,13 +36,13 @@ shutil.copy2(configuration_path, f'{config.OUTPUT_DIR}/training_configuration.js
 model = get_model(config).to(DEVICE)
 if torch.__version__[0] == '2':
     print("Compiling model with torch.compile...")
-    model = torch.compile(model, mode="max-autotune")
+    model = torch.compile(model)  # , mode="max-autotune")
     print("Model compiled successfully.")
 tokenizer = transforms.get_text_tokenizer(model.text_model.context_length)
 img_transform = transforms.get_image_transform(model.image_size)
 
 
-loss_fn = get_task_loss_fn(config.TASK, num_classes=len(config.CLASSES))
+loss_fn = get_task_loss_fn(config)
 
 optimizer = None
 params = []
@@ -68,8 +68,8 @@ val_size = len(dataset) - train_size
 
 training_dataset, validation_dataset = random_split(dataset, [train_size, val_size], generator=generator)
 
-training_loader = DataLoader(training_dataset, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True if DEVICE=='cuda' else False)
-validation_loader = DataLoader(validation_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True if DEVICE=='cuda' else False)
+training_loader = DataLoader(training_dataset, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True)
+validation_loader = DataLoader(validation_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True)
 
 text_features = None
 if config.MODEL_TYPE !=  "SoftCPT":
@@ -91,23 +91,28 @@ validation_ce_accuracies = []
 
 metrics_tracker = TrainingMetrics(output_dir=f'{config.OUTPUT_DIR}/metrics', class_names=config.CLASSES)
 
+'''
 epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
 print(f"Validation Loss ORDINAL BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
 metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
 metrics_tracker.plot_confusion_matrix(epoch='initial_ORDINAL')
 metrics_tracker.reset_predictions()
 if config.TASK == 'age':
-    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
+    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, CrossEntropyLoss(num_classes=len(config.CLASSES)), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
     print(f"Validation Loss CE BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
 
     metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
     metrics_tracker.plot_confusion_matrix(epoch='initial_CE')
     metrics_tracker.reset_predictions()
+'''
 
 patience = config.EARLY_STOPPING_PATIENCE
 epochs_no_improve = 0
 best_val_loss = float('inf')
 early_stop = False
+
+
+print(f"Loss type: {type(loss_fn)}")
 
 for epoch in range(config.EPOCHS):
     print(f"Epoch {epoch+1}/{config.EPOCHS}")    
