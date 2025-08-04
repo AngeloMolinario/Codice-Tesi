@@ -231,7 +231,7 @@ def plot_losses(training_losses, validation_ordinal_losses, validation_ce_losses
                 output_dir):
     print("Plotting and saving training curves...")
     os.makedirs(f'{output_dir}/plot', exist_ok=True)
-
+    
     # Plot Losses
     plt.figure(figsize=(10, 6))
     plt.plot(training_losses, label='Training Loss')
