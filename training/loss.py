@@ -24,18 +24,20 @@ class AgeOrdinalLoss():
 import torch
 import torch.nn as nn
 
-class _WeightedAgeOrdinalLoss():
+class WeightedAgeOrdinalLoss():
     # TODO: to test
     def __init__(self, num_classes, ordinal_loss='mae', weights=None):
         self.num_classes = num_classes
         self.ordinal_loss = nn.L1Loss(reduction='none') if ordinal_loss == 'mae' else nn.MSELoss(reduction='none')
         self.classes_range = torch.arange(num_classes).unsqueeze(0).float()
-
+        device='cuda' if torch.cuda.is_available() else 'cpu'
         if weights is not None:
             self.class_weights = weights
         else:
             self.class_weights = torch.ones(num_classes)
 
+        self.class_weights = self.class_weights.to(device)
+        self.classes_range = self.classes_range.to(device)
 
     def __call__(self, logit, true_labels, return_predicted_label=False):
         probabilities = torch.softmax(logit, dim=1)

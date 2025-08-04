@@ -66,21 +66,21 @@ def map_age_to_group(age):
     # If age is numeric, perform standard mapping
     try:
         age_num = float(age)
-        if 0 <= age_num <= 2:
+        if 0 <= age_num < 3:
             return 0
-        elif 3 <= age_num <= 9:
+        elif 3 <= age_num < 10:
             return 1
-        elif 10 <= age_num <= 19:
+        elif 10 <= age_num < 20:
             return 2
-        elif 20 <= age_num <= 29:
+        elif 20 <= age_num < 30:
             return 3
-        elif 30 <= age_num <= 39:
+        elif 30 <= age_num < 40:
             return 4
-        elif 40 <= age_num <= 49:
+        elif 40 <= age_num < 50:
             return 5
-        elif 50 <= age_num <= 59:
+        elif 50 <= age_num < 60:
             return 6
-        elif 60 <= age_num <= 69:
+        elif 60 <= age_num < 70:
             return 7
         elif age_num >= 70:
             return 8
@@ -304,15 +304,15 @@ def compute_task_weights(age_counts, gender_counts, emotion_counts):
 if __name__ == "__main__":
     NUM_THREADS = 2  # Adjust this number based on your system
     
-    datasetName = ""
-    root_path = "./../datasets_with_standard_labels/"
+    datasetName = "FairFace"
+    root_path = "./../processed_datasets/datasets_with_standard_labels/"
 
     dataset = MultiDataset(
         dataset_names=[datasetName],
         transform=None,
         split="train",
         datasets_root=root_path,
-        all_datasets=True
+        all_datasets=False
     )
 
     dataset_size = len(dataset)
@@ -387,7 +387,7 @@ if __name__ == "__main__":
     print("#"*30, "EMOTION", "#"*30)
     print_utils("emotion", total_emotion, final_emotion_distribution)
     print("Class weights for emotion distribution:")
-    for key, value in emotion_class_weight.items():
+    for key, value in sorted(emotion_class_weight.items()):
         print(f"\t- {key}: {value:.4f}")
     print()
 

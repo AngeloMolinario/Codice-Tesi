@@ -47,7 +47,7 @@ def _specific_task_train_epoch(model, optmizer, dataloader, losses, task_name, d
         
         # Print progress only if not using tqdm
         if not use_tqdm:
-            if batch_idx % 20 == 0:
+            if batch_idx % 250 == 0:
                 print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
 
     # Trasferimento su CPU solo alla fine per il calcolo finale
@@ -98,7 +98,7 @@ def multitask_epoch_train():
         
         # Print progress only if not using tqdm
         if not use_tqdm:
-            if batch_idx % 20 == 0:
+            if batch_idx % 250 == 0:
                 print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
 
     epoch_accuracy = total_correct / total_samples  # Accuratezza media su tutto il dataset
@@ -142,7 +142,7 @@ def _specific_task_val_epoch(model, dataloader, losses, task_name, device, text_
 
             # Print progress only if not using tqdm
             if not use_tqdm:
-                if batch_idx % 25 == 0:
+                if batch_idx % 250 == 0:
                     print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)            
 
     epoch_accuracy = total_correct / total_samples  # Accuratezza media su tutto il dataset
@@ -221,7 +221,9 @@ def get_task_loss_fn(cfg):
     if cfg.TASK == 'multitask':
         raise NotImplementedError("Multitask loss function is not implemented yet.")
     if cfg.TASK == 'age':
-        return AgeOrdinalLoss(num_classes=len(cfg.CLASSES))
+        print("Using AgeOrdinalLoss for age task. with class weights:", cfg.CLASS_WEIGHTS)
+        return WeightedAgeOrdinalLoss(num_classes=len(cfg.CLASSES), weights=torch.tensor(cfg.CLASS_WEIGHTS, dtype=torch.float32))
+        #return AgeOrdinalLoss(num_classes=len(cfg.CLASSES))
     return CrossEntropyLoss()
     
 
