@@ -2,7 +2,7 @@
     "USE_TQDM": false,
     "BATCH_SIZE": 80,
     "NUM_WORKERS": 6,
-    "EPOCHS": 10,
+    "EPOCHS": 1,
     "LR": 0.0001,
     "TASK": "gender",
     "MODEL_TYPE": "VPT",
@@ -11,10 +11,15 @@
         "A photo of a male",
         "A photo of a female"
     ],
-    "NUM_VISUAL_PROMPTS": 10,
-    "DATASET_NAMES": ["FairFace"],
+    "NUM_VISUAL_PROMPTS": 50,
+    "DATASET_NAMES": ["CelebA_HQ", "MiviaGender", "RAF-DB"],
     "DATASET_ROOT": "../datasets_with_standard_labels",
-    "TRAIN_SPLIT": 0.8,
-    "VAL_SPLIT": 0.2,
-    "SEED" : 2025
+    "TRAIN_SPLIT": 0.9,
+    "SEED" : 2025,
+    "OUTPUT_DIR": "../TRAINING_OUTPUT/PECore_VPT_gender/",
+    "NAMED_TRAINABLE_PARAMETERS":[
+        "prompt_learner",
+        "logit_scale"
+    ],
+    "EARLY_STOPPING_PATIENCE": 5
 }

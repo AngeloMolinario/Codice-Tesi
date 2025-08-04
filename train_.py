@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import torch
 import shutil
@@ -19,7 +20,7 @@ from utils.configuration import Config
 
 
 # Load configuration from JSON file
-configuration_path = 'config/PECore_VPT_age.json'
+configuration_path = sys.argv[1] if len(sys.argv) > 1 else "config/PECore_VPT_age.json"
 config = Config(configuration_path)
 # Set a generator
 generator = torch.Generator().manual_seed(config.SEED)

@@ -1,8 +1,8 @@
 {
-    "USE_TQDM": false,
+    "USE_TQDM": true,
     "BATCH_SIZE": 80,
     "NUM_WORKERS": 6,
-    "EPOCHS": 10,
+    "EPOCHS": 1,
     "LR": 0.0001,
     "TASK": "emotion",
     "MODEL_TYPE": "VPT",
@@ -16,10 +16,15 @@
         "A photo of an angry person",
         "A photo of a neutral person"
     ],
-    "NUM_VISUAL_PROMPTS": 10,
-    "DATASET_NAMES": ["FairFace"],
+    "NUM_VISUAL_PROMPTS": 50,
+    "DATASET_NAMES": ["RAF-DB"],
     "DATASET_ROOT": "../datasets_with_standard_labels",
-    "TRAIN_SPLIT": 0.8,
-    "VAL_SPLIT": 0.2,
-    "SEED" : 2025
+    "TRAIN_SPLIT": 0.9,
+    "SEED" : 2025,
+    "OUTPUT_DIR": "../TRAINING_OUTPUT/PECore_VPT_emotion/",
+    "NAMED_TRAINABLE_PARAMETERS":[
+        "prompt_learner",
+        "logit_scale"
+    ],
+    "EARLY_STOPPING_PATIENCE": 5
 }
