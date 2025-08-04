@@ -140,6 +140,51 @@ class BaseDataset(Dataset):
         
         return image, label
 
+    def get_class_weights(self, task):
+
+        if not hasattr(self, 'class_weights'):
+            self.class_weights = {}
+
+        if self.class_weights.get(task, None) is not None:
+            return self.class_weights[task]
+        print(f"Computing class weights for task: {task}")
+        # Compute class weights for the specified task
+        if task == 'age':
+            task_data = self.age_groups
+        elif task == 'gender':
+            task_data = self.genders
+        elif task == 'emotion':
+            task_data = self.emotions
+        else:
+            raise ValueError(f"Unknown task: {task}. Must be one of 'age', 'gender', 'emotion'")
+        
+        # Count occurrences of each class (excluding -1 values)
+        class_counts = {}
+        total_valid_samples = 0
+        
+        for value in task_data:
+            if value != -1:  # Exclude missing values
+                class_counts[value] = class_counts.get(value, 0) + 1
+                total_valid_samples += 1
+        
+        if total_valid_samples == 0:
+            raise ValueError(f"No valid samples found for task {task}")
+        
+        # Get all class indices and sort them
+        class_indices = sorted(class_counts.keys())
+        
+        # Compute inverse frequency weights in order
+        weights_array = []
+        for class_idx in class_indices:
+            count = class_counts[class_idx]
+            # Inverse frequency: total_samples / (num_classes * samples_per_class)
+            weight = total_valid_samples / (len(class_counts) * count)
+            weights_array.append(weight)
+        
+        # Store and return as tensor
+        weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
+        self.class_weights[task] = weights_tensor
+        return weights_tensor
 
 class MultiDataset(Dataset):
     def __init__(self, dataset_names, transform=None, split="train", datasets_root="datasets_with_standard_labels", all_datasets=False):

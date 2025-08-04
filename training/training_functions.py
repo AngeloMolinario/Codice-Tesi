@@ -217,12 +217,12 @@ def get_validation_step_fn(task):
     return _specific_task_val_epoch
 
 
-def get_task_loss_fn(cfg):
+def get_task_loss_fn(cfg, class_weights=None):
     if cfg.TASK == 'multitask':
         raise NotImplementedError("Multitask loss function is not implemented yet.")
     if cfg.TASK == 'age':
         print("Using AgeOrdinalLoss for age task. with class weights:", cfg.CLASS_WEIGHTS)
-        return WeightedAgeOrdinalLoss(num_classes=len(cfg.CLASSES), weights=torch.tensor(cfg.CLASS_WEIGHTS, dtype=torch.float32))
+        return WeightedAgeOrdinalLoss(num_classes=len(cfg.CLASSES), weights=class_weights)
         #return AgeOrdinalLoss(num_classes=len(cfg.CLASSES))
     return CrossEntropyLoss()
     

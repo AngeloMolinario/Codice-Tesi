@@ -42,7 +42,6 @@ tokenizer = transforms.get_text_tokenizer(model.text_model.context_length)
 img_transform = transforms.get_image_transform(model.image_size)
 
 
-loss_fn = get_task_loss_fn(config)
 
 optimizer = None
 params = []
@@ -81,6 +80,8 @@ if config.MODEL_TYPE !=  "SoftCPT":
 
 epoch_train_fn = get_training_step_fn(config.TASK)
 epoch_val_fn   = get_validation_step_fn(config.TASK)
+print(f"CLASSES WEIGHTS:{dataset.get_class_weights('age').to(DEVICE)}")
+loss_fn = get_task_loss_fn(config, weight=dataset.get_class_weights('age').to(DEVICE))
 
 training_losses = []
 training_accuracies = []
