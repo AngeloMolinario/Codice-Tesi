@@ -27,20 +27,16 @@ import torch.nn as nn
 
 class _WeightedAgeOrdinalLoss():
     # TODO: to test
-    def __init__(self, num_classes, ordinal_loss='mae', class_frequencies=None):
+    def __init__(self, num_classes, ordinal_loss='mae', weights=None):
         self.num_classes = num_classes
         self.ordinal_loss = nn.L1Loss(reduction='none') if ordinal_loss == 'mae' else nn.MSELoss(reduction='none')
         self.classes_range = torch.arange(num_classes).float()
-        
-        if class_frequencies is not None:
-            self.class_weights = self.calculate_class_weights(class_frequencies)
+
+        if weights is not None:
+            self.class_weights = weights
         else:
             self.class_weights = torch.ones(num_classes)
 
-    def calculate_class_weights(self, class_frequencies):
-        total_samples = sum(class_frequencies)
-        class_weights = [total_samples / (self.num_classes * f) for f in class_frequencies]
-        return torch.tensor(class_weights).float()
 
     def __call__(self, logit, true_labels, return_predicted_label=False):
         probabilities = torch.softmax(logit, dim=1)
