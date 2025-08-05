@@ -312,7 +312,7 @@ if __name__ == "__main__":
         transform=None,
         split="train",
         datasets_root=root_path,
-        all_datasets=False
+        all_datasets=True
     )
 
     dataset_size = len(dataset)

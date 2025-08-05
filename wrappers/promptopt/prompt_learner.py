@@ -211,10 +211,10 @@ class CustomModel(nn.Module):
 
         self.model = model    
         self.image_encoder = model.visual
-        self.text_encoder = model.text_model
+        self.text_model = model.text_model
         self.logit_scale = model.logit_scale
         self.dtype = model.dtype
-
+        self.image_size = model.image_size
         self.n_ctx = n_ctx
         self.ctx_dim = model.text_model.width
         self.task_feat_dim = model.text_model.width
@@ -241,7 +241,7 @@ class CustomModel(nn.Module):
         task_tokenized_prompts = self.task_tokenized_prompts                # Get the tokenized prompts for the task
 
         # TODO: check on the git implemetation the use of task_tokenized_prompts
-        task_features = self.text_encoder.prompt_forward(prompts, task_tokenized_prompts)  # Compute the task features using the text encoder and the tokenized prompts
+        task_features = self.text_model.prompt_forward(prompts, task_tokenized_prompts)  # Compute the task features using the text encoder and the tokenized prompts
 
         
         ctx = self.prompt_gen(task_features.type(self.dtype))                # Generate the context to be concatenated with the class embeddings
@@ -268,7 +268,7 @@ class CustomModel(nn.Module):
             # The i-th prompt learner is used to compute the text features for the classes of the i-th task
             # ctx[i] is the context for the i-th task
             prompts = p.forward(ctx[i])
-            f = self.text_encoder.prompt_forward(prompts, p.tokenized_prompts)
+            f = self.text_model.prompt_forward(prompts, p.tokenized_prompts)
             text_features.append(f)
         # Concatenate the text features for all classes
         text_features = torch.cat(text_features, dim=0)
@@ -280,7 +280,7 @@ class CustomModel(nn.Module):
 
         # DONE: check on the git implemetation the use of task_tokenized_prompts
         # task tokenized prompts are the token computed over the task name and the context placeholders
-        task_features = self.text_encoder.prompt_forward(prompts, task_tokenized_prompts)  # Compute the task features using the text encoder and the tokenized prompts
+        task_features = self.text_model.prompt_forward(prompts, task_tokenized_prompts)  # Compute the task features using the text encoder and the tokenized prompts
 
         
         ctx = self.prompt_gen(task_features.type(self.dtype))                # Generate the context to be concatenated with the class embeddings

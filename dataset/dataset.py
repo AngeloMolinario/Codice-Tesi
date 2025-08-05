@@ -116,9 +116,7 @@ class BaseDataset(Dataset):
         self.emotions = self.data['Facial Emotion'].fillna(-1).values
 
     def __len__(self):
-        # Return the number of images in the dataset
-        if len(self.data)> 300*1000:
-            return 300*1000  # Limit to 300k samples for performance
+        # Return the number of images in the dataset        
         return len(self.data)
 
     def __getitem__(self, idx):
@@ -141,20 +139,36 @@ class BaseDataset(Dataset):
         return image, label
 
     def get_class_weights(self, task):
-
+        """
+        Compute class weights for the specified task across all datasets.
+        
+        Args:
+            task (str): Task name ('age', 'gender', or 'emotion')
+            
+        Returns:
+            torch.Tensor: Class weights tensor
+        """
         if not hasattr(self, 'class_weights'):
             self.class_weights = {}
 
         if self.class_weights.get(task, None) is not None:
             return self.class_weights[task]
+            
         print(f"Computing class weights for task: {task}")
-        # Compute class weights for the specified task
+        
+        # Aggregate data from all datasets
         if task == 'age':
-            task_data = self.age_groups
+            all_task_data = []
+            for dataset in self.datasets:
+                all_task_data.extend(dataset.age_groups)
         elif task == 'gender':
-            task_data = self.genders
+            all_task_data = []
+            for dataset in self.datasets:
+                all_task_data.extend(dataset.genders)
         elif task == 'emotion':
-            task_data = self.emotions
+            all_task_data = []
+            for dataset in self.datasets:
+                all_task_data.extend(dataset.emotions)
         else:
             raise ValueError(f"Unknown task: {task}. Must be one of 'age', 'gender', 'emotion'")
         
@@ -162,7 +176,7 @@ class BaseDataset(Dataset):
         class_counts = {}
         total_valid_samples = 0
         
-        for value in task_data:
+        for value in all_task_data:
             if value != -1:  # Exclude missing values
                 class_counts[value] = class_counts.get(value, 0) + 1
                 total_valid_samples += 1
@@ -184,6 +198,10 @@ class BaseDataset(Dataset):
         # Store and return as tensor
         weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
         self.class_weights[task] = weights_tensor
+        
+        print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
+        print(f"Class weights for {task}: {weights_tensor}")
+        
         return weights_tensor
 
 class MultiDataset(Dataset):
@@ -287,7 +305,72 @@ class MultiDataset(Dataset):
                 'end_idx': self.cumulative_lengths[i + 1] - 1
             }
         return info
+    
+    def get_class_weights(self, task):
+        """
+        Compute class weights for the specified task across all datasets.
+        
+        Args:
+            task (str): Task name ('age', 'gender', or 'emotion')
+            
+        Returns:
+            torch.Tensor: Class weights tensor
+        """
+        if not hasattr(self, 'class_weights'):
+            self.class_weights = {}
 
+        if self.class_weights.get(task, None) is not None:
+            return self.class_weights[task]
+            
+        print(f"Computing class weights for task: {task}")
+        
+        # Aggregate data from all datasets
+        if task == 'age':
+            all_task_data = []
+            for dataset in self.datasets:
+                all_task_data.extend(dataset.age_groups)
+        elif task == 'gender':
+            all_task_data = []
+            for dataset in self.datasets:
+                all_task_data.extend(dataset.genders)
+        elif task == 'emotion':
+            all_task_data = []
+            for dataset in self.datasets:
+                all_task_data.extend(dataset.emotions)
+        else:
+            raise ValueError(f"Unknown task: {task}. Must be one of 'age', 'gender', 'emotion'")
+        
+        # Count occurrences of each class (excluding -1 values)
+        class_counts = {}
+        total_valid_samples = 0
+        
+        for value in all_task_data:
+            if value != -1:  # Exclude missing values
+                class_counts[value] = class_counts.get(value, 0) + 1
+                total_valid_samples += 1
+        
+        if total_valid_samples == 0:
+            raise ValueError(f"No valid samples found for task {task}")
+        
+        # Get all class indices and sort them
+        class_indices = sorted(class_counts.keys())
+        
+        # Compute inverse frequency weights in order
+        weights_array = []
+        for class_idx in class_indices:
+            count = class_counts[class_idx]
+            # Inverse frequency: total_samples / (num_classes * samples_per_class)
+            weight = total_valid_samples / (len(class_counts) * count)
+            weights_array.append(weight)
+        
+        # Store and return as tensor
+        weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
+        self.class_weights[task] = weights_tensor
+        
+        print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
+        print(f"Class weights for {task}: {weights_tensor}")
+        
+        return weights_tensor
 
 
 if __name__ == "__main__":
