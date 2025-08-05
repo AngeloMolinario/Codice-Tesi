@@ -71,11 +71,7 @@ if hasattr(config, 'CHECKPOINT_PATH') and config.CHECKPOINT_PATH:
 else:
     print("No checkpoint path provided, using pretrained weights")
 
-# Compile model after loading weights
-if torch.__version__[0] == '2':
-    print("Compiling model with torch.compile...")
-    model = torch.compile(model)  # , mode="max-autotune")
-    print("Model compiled successfully.")
+
 tokenizer = transforms.get_text_tokenizer(model.text_model.context_length)
 img_transform = transforms.get_image_transform(model.image_size)
 
@@ -107,18 +103,10 @@ validation_ce_losses = []
 validation_ce_accuracies = []
 
 metrics_tracker = TrainingMetrics(output_dir=f'{config.OUTPUT_DIR}/metrics', class_names=config.CLASSES)
-
+test_name = "baseline" if hasattr(config, 'CHECKPOINT_PATH') else "NUM_VISUAL_PROMPTS_" + str(config.NUM_VISUAL_PROMPTS)
 with torch.no_grad():
     epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
     print(f"Validation Loss ORDINAL BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
     metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
-    metrics_tracker.plot_confusion_matrix(epoch='initial_ORDINAL')
+    metrics_tracker.plot_confusion_matrix(epoch=test_name)
     metrics_tracker.reset_predictions()
-    if config.TASK == 'age':
-        epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
-        print(f"Validation Loss CE BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
-
-        metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
-        metrics_tracker.plot_confusion_matrix(epoch='initial_CE')
-        metrics_tracker.reset_predictions()
-
