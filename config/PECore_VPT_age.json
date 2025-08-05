@@ -1,8 +1,8 @@
 {
     "USE_TQDM": true,
-    "BATCH_SIZE": 80,
-    "NUM_WORKERS": 6,
-    "EPOCHS": 1,
+    "BATCH_SIZE": 128,
+    "NUM_WORKERS": 4,
+    "EPOCHS": 5,
     "LR": 0.0001,
     "TASK": "age",
     "MODEL_TYPE": "VPT",
@@ -19,14 +19,13 @@
         "A photo of a person with more than 70 years old"
     ],
     "NUM_VISUAL_PROMPTS": 50,
-    "DATASET_NAMES": ["VggFace2","FairFace"],
-    "DATASET_ROOT": "../datasets_with_standard_labels",
-    "TRAIN_SPLIT": 0.9,    
-    "SEED" : 2025,
+    "DATASET_NAMES": ["FairFace"],
+    "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
+    "TRAIN_SPLIT": 0.9,
+    "SEED": 2025,
     "OUTPUT_DIR": "../TRAINING_OUTPUT/PECore_VPT_age/",
     "NAMED_TRAINABLE_PARAMETERS":[
-        "prompt_learner",
-        "logit_scale"
+        "prompt_learner"
     ],
     "EARLY_STOPPING_PATIENCE": 5
 }

@@ -1,9 +1,9 @@
 {
     "USE_TQDM": true,
     "BATCH_SIZE": 80,
-    "NUM_WORKERS": 6,
-    "EPOCHS": 1,
-    "LR": 0.0001,
+    "NUM_WORKERS": 4,
+    "EPOCHS": 10,
+    "LR": 0.001,
     "TASK": "emotion",
     "MODEL_TYPE": "VPT",
     "CLASSES": ["Surprise", "Fear", "Disgust", "Happy", "Sad", "Angry", "Neutral"],
@@ -16,15 +16,15 @@
         "A photo of an angry person",
         "A photo of a neutral person"
     ],
-    "NUM_VISUAL_PROMPTS": 50,
+    "NUM_VISUAL_PROMPTS": 5,
     "DATASET_NAMES": ["RAF-DB"],
-    "DATASET_ROOT": "../datasets_with_standard_labels",
-    "TRAIN_SPLIT": 0.9,
+    "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
+    "TRAIN_SPLIT": 0.7,
     "SEED" : 2025,
     "OUTPUT_DIR": "../TRAINING_OUTPUT/PECore_VPT_emotion/",
     "NAMED_TRAINABLE_PARAMETERS":[
         "prompt_learner",
         "logit_scale"
-    ],
+],
     "EARLY_STOPPING_PATIENCE": 5
 }
