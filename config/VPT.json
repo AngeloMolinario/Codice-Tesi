@@ -1,0 +1,62 @@
+{
+    "USE_TQDM": true,
+    "BATCH_SIZE": 80,
+    "NUM_WORKERS": 4,
+    "EPOCHS": 10,
+    "LR": 0.0001,
+    "MODEL_TYPE": "VPT",
+    "MODEL_NAME": "PECore",
+    "NUM_VISUAL_PROMPTS": 5,
+    "NUM_SAMPLES_PER_CLASS": 10,
+    "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
+    "TRAIN_SPLIT": 0.7,
+    "SEED": 2025,
+    "NAMED_TRAINABLE_PARAMETERS": [
+        "prompt_learner",
+        "logit_scale"
+    ],
+    "EARLY_STOPPING_PATIENCE": 5,
+    "TASK": "multitask",
+    "CLASSES": {
+        "age": ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
+        "emotion": ["Surprise", "Fear", "Disgust", "Happy", "Sad", "Angry", "Neutral"],
+        "gender": ["male", "female"]
+    },
+    "TEXT_CLASSES_PROMPT": {
+        "age": [
+            "A photo of a person between 0 and 2 years old",
+            "A photo of a person between 3 and 9 years old",
+            "A photo of a person between 10 and 19 years old",
+            "A photo of a person between 20 and 29 years old",
+            "A photo of a person between 30 and 39 years old",
+            "A photo of a person between 40 and 49 years old",
+            "A photo of a person between 50 and 59 years old",
+            "A photo of a person between 60 and 69 years old",
+            "A photo of a person with more than 70 years old"
+        ],
+        "emotion": [
+            "A photo of a surprised person",
+            "A photo of a fearful person",
+            "A photo of a disgusted person",
+            "A photo of a happy person",
+            "A photo of a sad person",
+            "A photo of an angry person",
+            "A photo of a neutral person"
+        ],
+        "gender": [
+            "A photo of a male",
+            "A photo of a female"
+        ]
+    },
+    "DATASET_NAMES": {
+        "age": ["FairFace"],
+        "emotion": ["RAF-DB"],
+        "gender": ["CelebA_HQ"]
+    },
+    "VALIDATION_DATASET": {
+        "age": ["FairFace"],
+        "emotion": ["RAF-DB"],
+        "gender": ["CelebA_HQ"]
+    },
+    "OUTPUT_DIR": "../TRAINING_OUTPUT/PECore_VPT_merged/"
+}

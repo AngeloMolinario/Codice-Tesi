@@ -7,7 +7,7 @@ from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
-from dataset.dataset import BaseDataset, MultiDataset
+from dataset.dataset import BaseDataset, MultiDataset, BalancedIdxDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
 from training import training_functions
@@ -59,19 +59,27 @@ if config.MODEL_TYPE == "softCPT":
     for param in model.get_softCPT_parameters():
         param.requires_grad = True
 
-optimizer = torch.optim.AdamW(params, lr=config.LR) if config.MODEL_TYPE != "softCPT" else torch.optim.AdamW(model.get_softCPT_parameters(), lr=config.LR)
+optimizer = torch.optim.Adam(params, lr=config.LR) if config.MODEL_TYPE != "softCPT" else torch.optim.Adam(model.get_softCPT_parameters(), lr=config.LR)
 # Aggiungi scheduler per diminuire LR di 1/6 ad ogni epoca fino a un minimo di 1e-6
-scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: max(5/6, 1e-6/optimizer.param_groups[0]['lr']))
+scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: max(8/10, 1e-6/optimizer.param_groups[0]['lr']))
 print(f"Trainable parameter objects: {len(params)}")
 print(f"Total trainable parameter values: {total_trainable_params}")
 
+training_dataset = validation_dataset = None
+
+if hasattr(config, 'NUM_SAMPLES_PER_CLASS'):
+    dataset = get_datasets(config.DATASET_NAMES, transforms=img_transform, split="train", dataset_root=config.DATASET_ROOT, config=config, validation_sample=50)    
+    training_dataset = BalancedIdxDataset(dataset.dataset, num_samples_per_class=config.NUM_SAMPLES_PER_CLASS, ignore_indices=dataset.balanced_indices)
+    validation_dataset = dataset
+else:
+    dataset = get_datasets(config.DATASET_NAMES, transforms=img_transform, split="train", dataset_root=config.DATASET_ROOT, config=config)
+    train_size = int(config.TRAIN_SPLIT * len(dataset))
+    val_size = len(dataset) - train_size
+    training_dataset, validation_dataset = random_split(dataset, [train_size, val_size], generator=generator)
 
 
-dataset = get_datasets(config.DATASET_NAMES, transforms=img_transform, split="train", dataset_root=config.DATASET_ROOT)
-train_size = int(config.TRAIN_SPLIT * len(dataset))
-val_size = len(dataset) - train_size
-
-training_dataset, validation_dataset = random_split(dataset, [train_size, val_size], generator=generator)
+print("training_dataset length:", len(training_dataset))
+print("validation_dataset length:", len(validation_dataset))
 
 training_loader = DataLoader(training_dataset, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True)
 validation_loader = DataLoader(validation_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True)
@@ -90,11 +98,11 @@ epoch_val_fn   = get_validation_step_fn(config.TASK)
 weights = None
 if config.TASK == "multitask":
     weights = []
-    weights.append(dataset.get_class_weights("age").to(DEVICE))
-    weights.append(dataset.get_class_weights("gender").to(DEVICE))
-    weights.append(dataset.get_class_weights("emotion").to(DEVICE))
+    weights.append(training_dataset.get_class_weights("age").to(DEVICE))
+    weights.append(training_dataset.get_class_weights("gender").to(DEVICE))
+    weights.append(training_dataset.get_class_weights("emotion").to(DEVICE))
 else:
-    weights = dataset.get_class_weights(config.TASK).to(DEVICE)
+    weights = training_dataset.get_class_weights(config.TASK).to(DEVICE)
 
 loss_fn = get_task_loss_fn(config, weights=weights)
 
@@ -105,7 +113,21 @@ validation_ordinal_accuracies = []
 validation_ce_losses = []
 validation_ce_accuracies = []
 
-metrics_tracker = TrainingMetrics(output_dir=f'{config.OUTPUT_DIR}/metrics', class_names=config.CLASSES)
+# Initialize metrics tracker based on task type
+if config.TASK == 'multitask':
+    task_names = ['age', 'gender', 'emotion']
+    metrics_tracker = TrainingMetrics(
+        output_dir=f'{config.OUTPUT_DIR}/metrics', 
+        class_names=config.CLASSES,  # Should be a list of lists for multitask
+        is_multitask=True,
+        task_names=task_names
+    )
+else:
+    metrics_tracker = TrainingMetrics(
+        output_dir=f'{config.OUTPUT_DIR}/metrics', 
+        class_names=config.CLASSES,
+        is_multitask=False
+    )
 
 patience = config.EARLY_STOPPING_PATIENCE
 epochs_no_improve = 0
@@ -114,20 +136,7 @@ early_stop = False
 
 
 print(f"Loss type: {type(loss_fn)}")
-'''
-visualize_similarity_representations(
-            model=model, 
-            dataloader=validation_loader,
-            device=DEVICE,
-            task_name="age" if config.TASK=='multitask' else config.TASK,  # Specifica direttamente 'age' se multitask
-            output_dir=f'{config.OUTPUT_DIR}/tsne_similarity_plots',
-            class_names=config.CLASSES,  
-            text_features=text_features,
-            max_samples=10000,
-            perplexity=5,
-            epoch=0  
-        )
-'''
+
 
 for epoch in range(config.EPOCHS):
     print(f"Epoch {epoch+1}/{config.EPOCHS}")
@@ -135,7 +144,11 @@ for epoch in range(config.EPOCHS):
     ########### TRAINING STEP ###########
     epoch_loss, epoch_accuracy = epoch_train_fn(model, optimizer, training_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
     training_losses.append(epoch_loss[0])
-    training_accuracies.append(epoch_accuracy[0])   
+    training_accuracies.append(epoch_accuracy[0])
+    
+    # Update training metrics in the tracker
+    metrics_tracker.update_train_metrics(epoch_loss, epoch_accuracy)
+    
     for i in range(len(epoch_loss)):
         print(f"Training) Task {i} - Loss: {epoch_loss[i]:.4f}, Accuracy: {epoch_accuracy[i]:.4f}")    
     '''
@@ -164,9 +177,28 @@ for epoch in range(config.EPOCHS):
 
     validation_ordinal_losses.append(epoch_loss[0])
     validation_ordinal_accuracies.append(epoch_accuracy[0])
-    metrics_tracker.update_predictions(torch.cat(all_preds[0]), torch.cat(all_labels[0]))
-    metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}")
-    metrics_tracker.reset_predictions()
+    
+    # Update validation metrics in the tracker
+    metrics_tracker.update_val_metrics(epoch_loss, epoch_accuracy)
+    
+    # Handle confusion matrix based on task type
+    if config.TASK == 'multitask':
+        # For multitask: update predictions for each task separately
+        for task_idx in range(len(all_preds)):
+            if all_preds[task_idx] and all_labels[task_idx]:  # Check if task has data
+                task_preds = torch.cat(all_preds[task_idx])
+                task_labels = torch.cat(all_labels[task_idx])
+                metrics_tracker.update_predictions(task_preds, task_labels, task_idx=task_idx)
+        
+        # Plot confusion matrices for all tasks
+        metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}")
+        metrics_tracker.reset_predictions()
+    else:
+        # For single task: original behavior
+        metrics_tracker.update_predictions(torch.cat(all_preds[0]), torch.cat(all_labels[0]))
+        metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}")
+        metrics_tracker.reset_predictions()
+    
     metrics_tracker.plot_metrics()
     
     # Early stopping check
@@ -191,14 +223,15 @@ for epoch in range(config.EPOCHS):
             break
 
     # Aggiorna il learning rate alla fine dell'epoca (solo se sopra il minimo)
-    current_lr = optimizer.param_groups[0]['lr']
-    if current_lr > 1e-6:
-        new_lr = max(current_lr / 6, 1e-6)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = new_lr
-        print(f"Learning rate updated to: {new_lr:.8f}")
-    else:
-        print(f"Learning rate at minimum: {current_lr:.8f}")
+    if (epoch+1)%3 == 0:
+        current_lr = optimizer.param_groups[0]['lr']
+        if current_lr > 1e-6:
+            new_lr = max(current_lr / 6, 1e-6)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = new_lr
+            print(f"Learning rate updated to: {new_lr:.8f}")
+        else:
+            print(f"Learning rate at minimum: {current_lr:.8f}")
     
     # Save model state dict
     torch.save(model.state_dict(), f'{config.OUTPUT_DIR}/ckpt/latest_model.pth')

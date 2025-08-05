@@ -26,7 +26,7 @@ import torch.nn as nn
 
 class WeightedAgeOrdinalLoss():
     # TODO: to test
-    def __init__(self, num_classes, ordinal_loss='mae', weights=None):
+    def __init__(self, num_classes, ordinal_loss='mse', weights=None):
         self.num_classes = num_classes
         self.ordinal_loss = nn.L1Loss(reduction='none') if ordinal_loss == 'mae' else nn.MSELoss(reduction='none')
         self.classes_range = torch.arange(num_classes).unsqueeze(0).float()

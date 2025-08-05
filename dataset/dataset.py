@@ -3,7 +3,9 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset
 import pandas as pd
+import numpy as np
 from PIL import Image
+import random
 
 def map_age_to_group(age):
     """
@@ -140,7 +142,7 @@ class BaseDataset(Dataset):
 
     def get_class_weights(self, task):
         """
-        Compute class weights for the specified task across all datasets.
+        Compute class weights for the specified task for this dataset only.
         
         Args:
             task (str): Task name ('age', 'gender', or 'emotion')
@@ -154,21 +156,15 @@ class BaseDataset(Dataset):
         if self.class_weights.get(task, None) is not None:
             return self.class_weights[task]
             
-        print(f"Computing class weights for task: {task}")
-        
-        # Aggregate data from all datasets
+        print(f"Computing class weights for task: {task} (BaseDataset)")
+
+        # Aggregate data from this dataset only
         if task == 'age':
-            all_task_data = []
-            for dataset in self.datasets:
-                all_task_data.extend(dataset.age_groups)
+            all_task_data = self.age_groups
         elif task == 'gender':
-            all_task_data = []
-            for dataset in self.datasets:
-                all_task_data.extend(dataset.genders)
+            all_task_data = self.genders
         elif task == 'emotion':
-            all_task_data = []
-            for dataset in self.datasets:
-                all_task_data.extend(dataset.emotions)
+            all_task_data = self.emotions
         else:
             raise ValueError(f"Unknown task: {task}. Must be one of 'age', 'gender', 'emotion'")
         
@@ -187,15 +183,12 @@ class BaseDataset(Dataset):
         # Get all class indices and sort them
         class_indices = sorted(class_counts.keys())
         
-        # Compute inverse frequency weights in order
         weights_array = []
         for class_idx in class_indices:
             count = class_counts[class_idx]
-            # Inverse frequency: total_samples / (num_classes * samples_per_class)
             weight = total_valid_samples / (len(class_counts) * count)
             weights_array.append(weight)
         
-        # Store and return as tensor
         weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
         self.class_weights[task] = weights_tensor
         
@@ -290,20 +283,46 @@ class MultiDataset(Dataset):
         # Get the sample from the appropriate dataset
         return self.datasets[dataset_idx][local_idx]
     
-    def get_dataset_info(self):
+    def get_dataset_info(self, compute_stats=False):
         """
         Get information about the loaded datasets.
         
+        Args:
+            compute_stats (bool): If True, compute label distributions and missing value counts (expensive).
+        
         Returns:
-            dict: Information about each dataset including name, length, and cumulative ranges
+            dict: Information about each dataset including name, length, cumulative ranges, and optionally stats.
         """
         info = {}
         for i, name in enumerate(self.dataset_names[:len(self.datasets)]):
-            info[name] = {
+            dataset_info = {
                 'length': self.dataset_lengths[i],
                 'start_idx': self.cumulative_lengths[i],
                 'end_idx': self.cumulative_lengths[i + 1] - 1
             }
+            if compute_stats:
+                ds = self.datasets[i]
+                stats = {}
+                # Label distributions (excluding missing values)
+                for task in ['age', 'gender', 'emotion']:
+                    if task == 'age':
+                        data = ds.age_groups
+                    elif task == 'gender':
+                        data = ds.genders
+                    elif task == 'emotion':
+                        data = ds.emotions
+                    else:
+                        continue
+                    valid_data = [v for v in data if v != -1]
+                    if valid_data:
+                        unique, counts = np.unique(valid_data, return_counts=True)
+                        stats[f'{task}_distribution'] = dict(zip(unique.tolist(), counts.tolist()))
+                        stats[f'{task}_missing'] = int(len(data) - len(valid_data))
+                    else:
+                        stats[f'{task}_distribution'] = {}
+                        stats[f'{task}_missing'] = len(data)
+                dataset_info['stats'] = stats
+            info[name] = dataset_info
         return info
     
     def get_class_weights(self, task):
@@ -370,13 +389,244 @@ class MultiDataset(Dataset):
         print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
         print(f"Class weights for {task}: {weights_tensor}")
         
+        return weights_tensor    
+
+
+class BalancedIdxDataset(Dataset):
+    """
+    A dataset wrapper that provides access only to a balanced subset of samples
+    defined by a list of indices, as sampled from a MultiDataset.
+
+    Args:
+        multidataset (MultiDataset): The source dataset.
+        num_samples_per_class (int): Number of samples per class for balancing.
+        ignore_indices (List[int], optional): List of global indices to ignore during sampling.
+
+    Attributes:
+        dataset (MultiDataset): Reference to the source dataset.
+        balanced_indices (List[int]): List of global indices for balanced sampling.
+        class_weights_cache (dict): Cached class weights per task.
+        task_weights_cache (torch.Tensor or None): Cached task weights tensor.
+    """
+    def __init__(self, multidataset, num_samples_per_class, ignore_indices=None):
+        self.dataset = multidataset
+        self.ignore_indices = set(ignore_indices) if ignore_indices is not None else set()
+        self.balanced_indices = self._sample_balanced_indices(num_samples_per_class)
+        self.class_weights_cache = {}
+        self.task_weights_cache = None
+
+    def _sample_balanced_indices(self, num_samples_per_class):
+        used_indices = set(self.ignore_indices)
+        merged_indices = []
+
+        for task in ['age', 'gender', 'emotion']:
+            valid_class_indices = dict()
+            for d_idx, dataset in enumerate(self.dataset.datasets):
+                if task == 'age':
+                    labels = dataset.age_groups
+                elif task == 'gender':
+                    labels = dataset.genders
+                elif task == 'emotion':
+                    labels = dataset.emotions
+                else:
+                    raise ValueError(f"Unknown task: {task}")
+                for l_idx, label in enumerate(labels):
+                    if label != -1:
+                        global_idx = self.dataset.cumulative_lengths[d_idx] + l_idx
+                        if label not in valid_class_indices:
+                            valid_class_indices[label] = []
+                        valid_class_indices[label].append(global_idx)
+            for class_value in sorted(valid_class_indices.keys()):
+                candidates = [idx for idx in valid_class_indices[class_value] if idx not in used_indices]
+                random.shuffle(candidates)
+                chosen = candidates[:min(num_samples_per_class, len(candidates))]
+                merged_indices.extend(chosen)
+                used_indices.update(chosen)
+        return merged_indices
+
+    def __len__(self):
+        return len(self.balanced_indices)
+
+    def __getitem__(self, idx):
+        global_idx = self.balanced_indices[idx]
+        return self.dataset[global_idx]
+
+    def get_class_weights(self, task):
+        """
+        Compute class weights for the specified task for the balanced dataset only.
+        Weights are computed and cached the first time the function is called.
+
+        Args:
+            task (str): Task name ('age', 'gender', or 'emotion')
+
+        Returns:
+            torch.Tensor: Class weights tensor
+        """
+        if task in self.class_weights_cache:
+            return self.class_weights_cache[task]
+
+        print(f"Computing class weights for task: {task} (BalancedIdxDataset)")
+
+        all_task_data = []
+        for idx in self.balanced_indices:
+            d_idx = 0
+            for i, cum_len in enumerate(self.dataset.cumulative_lengths[1:], 1):
+                if idx < cum_len:
+                    d_idx = i - 1
+                    break
+            local_idx = idx - self.dataset.cumulative_lengths[d_idx]
+            ds = self.dataset.datasets[d_idx]
+            if task == 'age':
+                label = ds.age_groups[local_idx]
+            elif task == 'gender':
+                label = ds.genders[local_idx]
+            elif task == 'emotion':
+                label = ds.emotions[local_idx]
+            else:
+                raise ValueError(f"Unknown task: {task}")
+            if label != -1:
+                all_task_data.append(label)
+
+        class_counts = {}
+        total_valid_samples = 0
+
+        for value in all_task_data:
+            class_counts[value] = class_counts.get(value, 0) + 1
+            total_valid_samples += 1
+
+        if total_valid_samples == 0:
+            raise ValueError(f"No valid samples found for task {task} in the balanced subset")
+
+        class_indices = sorted(class_counts.keys())
+        weights_array = []
+        for class_idx in class_indices:
+            count = class_counts[class_idx]
+            weight = total_valid_samples / (len(class_counts) * count)
+            weights_array.append(weight)
+
+        weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
+        self.class_weights_cache[task] = weights_tensor
+
+        print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
+        print(f"Class weights for {task}: {weights_tensor}")
+
         return weights_tensor
 
+    def get_task_weights(self):
+        """
+        Compute normalized task weights for the balanced dataset only.
+        Weights are computed and cached the first time the function is called.
+        Task weights are calculated as inverse frequency across tasks
+        ('age', 'gender', 'emotion') based on the number of valid samples in the subset,
+        and then normalized so their sum is 1.
+
+        Returns:
+            torch.Tensor: Normalized task weights tensor of shape (3,)
+        """
+        if self.task_weights_cache is not None:
+            return self.task_weights_cache
+
+        sample_counts = []
+        for task in ['age', 'gender', 'emotion']:
+            count = 0
+            for idx in self.balanced_indices:
+                d_idx = 0
+                for i, cum_len in enumerate(self.dataset.cumulative_lengths[1:], 1):
+                    if idx < cum_len:
+                        d_idx = i - 1
+                        break
+                local_idx = idx - self.dataset.cumulative_lengths[d_idx]
+                ds = self.dataset.datasets[d_idx]
+                if task == 'age':
+                    label = ds.age_groups[local_idx]
+                elif task == 'gender':
+                    label = ds.genders[local_idx]
+                elif task == 'emotion':
+                    label = ds.emotions[local_idx]
+                else:
+                    raise ValueError(f"Unknown task: {task}")
+                if label != -1:
+                    count += 1
+            sample_counts.append(count)
+        sample_counts = torch.tensor(sample_counts, dtype=torch.float32)
+        # Avoid division by zero for missing tasks
+        raw_weights = 1.0 / torch.where(sample_counts == 0, torch.ones_like(sample_counts), sample_counts)
+        # Normalize so sum is 1
+        normalized_weights = raw_weights / raw_weights.sum()
+        self.task_weights_cache = normalized_weights
+        print(f"Normalized task weights: {normalized_weights}")
+        return normalized_weights
 
 if __name__ == "__main__":
+
+    def compute_class_and_task_weights_from_indices(dataset, idx_list):
+        """
+        Given a dataset and a list of indices, compute:
+        - For each task ('age', 'gender', 'emotion'), the class weights for the subset.
+        - For each task, the class distribution for the subset.
+        - The task weights, based on the number of (non-missing) samples per task.
+
+        Returns:
+            class_weights: dict { 'age': Tensor, 'gender': Tensor, 'emotion': Tensor }
+            task_weights: Tensor of shape (3,) corresponding to ['age', 'gender', 'emotion']
+            class_distributions: dict { 'age': {class: count, ...}, ... }
+        """
+        task_labels = { 'age': [], 'gender': [], 'emotion': [] }
+        class_distributions = { 'age': {}, 'gender': {}, 'emotion': {} }
+        for idx in idx_list:
+            if isinstance(dataset, MultiDataset):
+                d_idx = 0
+                for i, cum_len in enumerate(dataset.cumulative_lengths[1:], 1):
+                    if idx < cum_len:
+                        d_idx = i - 1
+                        break
+                local_idx = idx - dataset.cumulative_lengths[d_idx]
+                ds = dataset.datasets[d_idx]
+                age = ds.age_groups[local_idx]
+                gender = ds.genders[local_idx]
+                emotion = ds.emotions[local_idx]
+            else:  # BaseDataset
+                age = dataset.age_groups[idx]
+                gender = dataset.genders[idx]
+                emotion = dataset.emotions[idx]
+            if age != -1:
+                task_labels['age'].append(age)
+                class_distributions['age'][age] = class_distributions['age'].get(age, 0) + 1
+            if gender != -1:
+                task_labels['gender'].append(gender)
+                class_distributions['gender'][gender] = class_distributions['gender'].get(gender, 0) + 1
+            if emotion != -1:
+                task_labels['emotion'].append(emotion)
+                class_distributions['emotion'][emotion] = class_distributions['emotion'].get(emotion, 0) + 1
+
+        class_weights = {}
+        sample_counts = []
+
+        for task in ['age', 'gender', 'emotion']:
+            labels = task_labels[task]
+            class_counts = class_distributions[task]
+            total_valid_samples = len(labels)
+            sample_counts.append(total_valid_samples)
+            if total_valid_samples == 0 or len(class_counts) == 0:
+                weights_tensor = torch.tensor([], dtype=torch.float32)
+            else:
+                class_indices = sorted(class_counts.keys())
+                weights_array = []
+                for class_idx in class_indices:
+                    count = class_counts[class_idx]
+                    weight = total_valid_samples / (len(class_counts) * count)
+                    weights_array.append(weight)
+                weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
+            class_weights[task] = weights_tensor
+
+        # Task weights: inverse frequency (tasks with fewer samples have higher weight)
+        sample_counts = torch.tensor(sample_counts, dtype=torch.float32)
+        task_weights = sample_counts.sum() / (len(sample_counts) * sample_counts)
+
+        return class_weights, task_weights, class_distributions
     # Example usage
     dataset = BaseDataset(
-        root="../datasets_with_standard_labels/UTKFace",
+        root="../processed_datasets/datasets_with_standard_labels/UTKFace",
         transform=None,  # Add any transforms if needed
         split="test"
     )
@@ -385,27 +635,90 @@ if __name__ == "__main__":
     for i in range(len(dataset)):
         image, label = dataset[i]
         print(f"Sample {i}: Image shape , Label {label}")
-        if i == 50:
+        if i == 5:
             break
 
     dataset = MultiDataset(
         dataset_names=["FairFace", "CelebA_HQ", "RAF-DB"],  # Adjust these names as needed
         transform=None,  # Add any transforms if needed
         split="train",
-        datasets_root="../datasets_with_standard_labels",
+        datasets_root="../processed_datasets/datasets_with_standard_labels",
         all_datasets=True  # Set to True to load all datasets in the root directory
     )
     print(f"MultiDataset loaded successfully! Total samples: {len(dataset)}")
     for i in range(len(dataset)):
         image, label = dataset[i]
         print(f"Sample {i}: Label {label}")
-        if i == 50:
+        if i == 5:
             break
     
     print("Dataset information:")
     try:
-        info = dataset.get_dataset_info()
+        info = dataset.get_dataset_info(compute_stats=True)
         for name, details in info.items():
-            print(f"{name}: {details}")
+            print(f"Dataset: {name}")
+            print(f"  Number of samples: {details['length']}")
+            print(f"  Global index range: [{details['start_idx']} - {details['end_idx']}]")
+            stats = details.get('stats', {})
+            for task in ['age', 'gender', 'emotion']:
+                dist = stats.get(f"{task}_distribution", {})
+                missing = stats.get(f"{task}_missing", None)
+                print(f"  {task.capitalize()} statistics:")
+                if dist:
+                    print(f"    Distribution:")
+                    for k, v in dist.items():
+                        print(f"      Class {k}: {v} samples")
+                else:
+                    print("    Distribution: (none)")
+                print(f"    Missing: {missing} samples")
+            print()
     except Exception as e:
         print(f"Error loading MultiDataset: {e}")
+
+
+    print("\n\n\n")
+    print("TESTING BALANCED SAMPLING")
+    merged_indices = dataset.sample_balanced_indices(num_samples_per_class=1000)
+    class_weights, task_weights, class_distributions  = compute_class_and_task_weights_from_indices(dataset, merged_indices)
+    print("=== Balanced Sampling Summary ===")
+    for task in ['age', 'gender', 'emotion']:
+        print(f"\nTask: {task.capitalize()}")
+        dist = class_distributions.get(task, {})
+        if dist:
+            print("  Class Distribution:")
+            for k, v in dist.items():
+                print(f"    Class {k}: {v} samples")
+        else:
+            print("  Class Distribution: (none)")
+        weights = class_weights.get(task)
+        if weights is not None and len(weights) > 0:
+            print(f"  Class Weights: {weights.numpy()}")
+        else:
+            print("  Class Weights: N/A")
+    print("\nTask Weights: ", task_weights.numpy())
+    print("===============================")
+
+
+
+    # Example of using BalancedIdxDataset
+    balanced_dataset = BalancedIdxDataset(dataset, num_samples_per_class=10000)
+    print(f"BalancedIdxDataset created with {len(balanced_dataset)} samples")
+    for i in range(len(balanced_dataset)):
+        image, label = balanced_dataset[i]
+        print(f"Balanced Sample {i}: Label {label}")
+        if i == 5:
+            break
+
+    # Example of getting class weights from BalancedIdxDataset
+    try:
+        class_weights = balanced_dataset.get_class_weights('age')
+        print(f"Class weights for 'age': {class_weights.numpy()}")
+        class_weights = balanced_dataset.get_class_weights('emotion')
+        print(f"Class weights for 'emotion': {class_weights.numpy()}")
+        class_weights = balanced_dataset.get_class_weights('gender')
+        print(f"Class weights for 'gender': {class_weights.numpy()}")
+        print("Class weights computed successfully for all tasks.")
+        print("\n\n")
+        print(f"Task weights: {balanced_dataset.get_task_weights().numpy()}")
+    except Exception as e:
+        print(f"Error getting class weights: {e}")
