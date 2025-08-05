@@ -55,7 +55,13 @@ for name, param in model.named_parameters():
     else:
         param.requires_grad = False
 
-optimizer = torch.optim.AdamW(params, lr=config.LR)
+if config.MODEL_TYPE == "softCPT":
+    for param in model.get_softCPT_parameters():
+        param.requires_grad = True
+
+optimizer = torch.optim.AdamW(params, lr=config.LR) if config.MODEL_TYPE != "softCPT" else torch.optim.AdamW(model.get_softCPT_parameters(), lr=config.LR)
+# Aggiungi scheduler per diminuire LR di 1/6 ad ogni epoca fino a un minimo di 1e-6
+scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: max(5/6, 1e-6/optimizer.param_groups[0]['lr']))
 print(f"Trainable parameter objects: {len(params)}")
 print(f"Total trainable parameter values: {total_trainable_params}")
 
@@ -71,7 +77,7 @@ training_loader = DataLoader(training_dataset, batch_size=config.BATCH_SIZE, shu
 validation_loader = DataLoader(validation_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=config.NUM_WORKERS, persistent_workers=True, pin_memory=True)
 
 text_features = None
-if config.MODEL_TYPE !=  "SoftCPT":
+if config.MODEL_TYPE !=  "softCPT":
     print(f"Encoding text features for {config.TASK} classification...")
     texts = tokenizer(config.TEXT_CLASSES_PROMPT).to(DEVICE)
     with torch.no_grad():
@@ -80,8 +86,17 @@ if config.MODEL_TYPE !=  "SoftCPT":
 
 epoch_train_fn = get_training_step_fn(config.TASK)
 epoch_val_fn   = get_validation_step_fn(config.TASK)
-print(f"CLASSES WEIGHTS:{dataset.get_class_weights('age').to(DEVICE)}")
-loss_fn = get_task_loss_fn(config, weight=dataset.get_class_weights('age').to(DEVICE))
+
+weights = None
+if config.TASK == "multitask":
+    weights = []
+    weights.append(dataset.get_class_weights("age").to(DEVICE))
+    weights.append(dataset.get_class_weights("gender").to(DEVICE))
+    weights.append(dataset.get_class_weights("emotion").to(DEVICE))
+else:
+    weights = dataset.get_class_weights(config.TASK).to(DEVICE)
+
+loss_fn = get_task_loss_fn(config, weights=weights)
 
 training_losses = []
 training_accuracies = []
@@ -92,21 +107,6 @@ validation_ce_accuracies = []
 
 metrics_tracker = TrainingMetrics(output_dir=f'{config.OUTPUT_DIR}/metrics', class_names=config.CLASSES)
 
-'''
-epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
-print(f"Validation Loss ORDINAL BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
-metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
-metrics_tracker.plot_confusion_matrix(epoch='initial_ORDINAL')
-metrics_tracker.reset_predictions()
-if config.TASK == 'age':
-    epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, CrossEntropyLoss(num_classes=len(config.CLASSES)), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
-    print(f"Validation Loss CE BEFORE TRAINING: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
-
-    metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
-    metrics_tracker.plot_confusion_matrix(epoch='initial_CE')
-    metrics_tracker.reset_predictions()
-'''
-
 patience = config.EARLY_STOPPING_PATIENCE
 epochs_no_improve = 0
 best_val_loss = float('inf')
@@ -114,53 +114,66 @@ early_stop = False
 
 
 print(f"Loss type: {type(loss_fn)}")
+'''
+visualize_similarity_representations(
+            model=model, 
+            dataloader=validation_loader,
+            device=DEVICE,
+            task_name="age" if config.TASK=='multitask' else config.TASK,  # Specifica direttamente 'age' se multitask
+            output_dir=f'{config.OUTPUT_DIR}/tsne_similarity_plots',
+            class_names=config.CLASSES,  
+            text_features=text_features,
+            max_samples=10000,
+            perplexity=5,
+            epoch=0  
+        )
+'''
 
 for epoch in range(config.EPOCHS):
-    print(f"Epoch {epoch+1}/{config.EPOCHS}")    
+    print(f"Epoch {epoch+1}/{config.EPOCHS}")
+    print(f"Current learning rate: {optimizer.param_groups[0]['lr']:.8f}")
     ########### TRAINING STEP ###########
     epoch_loss, epoch_accuracy = epoch_train_fn(model, optimizer, training_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
-    training_losses.append(epoch_loss.item())
-    training_accuracies.append(epoch_accuracy)   
-    print(f"Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
+    training_losses.append(epoch_loss[0])
+    training_accuracies.append(epoch_accuracy[0])   
+    for i in range(len(epoch_loss)):
+        print(f"Training) Task {i} - Loss: {epoch_loss[i]:.4f}, Accuracy: {epoch_accuracy[i]:.4f}")    
+    '''
+    if (epoch+1) % 5 == 0:
+        visualize_similarity_representations(
+            model=model, 
+            dataloader=validation_loader,
+            device=DEVICE,
+            task_name="age" if config.TASK=='multitask' else config.TASK,  # Specifica direttamente 'age' se multitask
+            output_dir=f'{config.OUTPUT_DIR}/tsne_similarity_plots',
+            class_names=config.CLASSES,  # Passa solo le classi age
+            text_features=text_features,
+            max_samples=10000,
+            perplexity=30,
+            epoch=epoch+1  # Aggiungi il numero di epoca (1-based)
 
-
+        )
+    '''
     ############ VALIDATION STEP ###########
     print("Performing validation...")
 
-    if config.TASK == 'age':
-        # Also validate with CrossEntropyLoss for age classification
-        epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, CrossEntropyLoss(), config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
-        print(f"Validation Loss CE: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
-
-        # Store validation losses and accuracies
-        validation_ce_losses.append(epoch_loss.item())
-        validation_ce_accuracies.append(epoch_accuracy)    
-        metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
-        metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}_CE")
-        metrics_tracker.reset_predictions()
-        metrics_tracker.plot_metrics()
-
-
     epoch_loss, epoch_accuracy, all_preds, all_labels = epoch_val_fn(model, validation_loader, loss_fn, config.TASK, DEVICE, text_features, use_tqdm=config.USE_TQDM)
-    print(f"Validation Loss ORDINAL: {epoch_loss:.4f}, Validation Accuracy: {epoch_accuracy:.4f}")
+    for i in range(len(epoch_loss)):
+        print(f"Validation) Task {i} - Loss: {epoch_loss[i]:.4f}, Accuracy: {epoch_accuracy[i]:.4f}")    
     # Store validation losses and accuracies
 
-    validation_ordinal_losses.append(epoch_loss.item())
-    validation_ordinal_accuracies.append(epoch_accuracy)
-    metrics_tracker.update_predictions(torch.cat(all_preds), torch.cat(all_labels))
-    metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}_ORDINAL")
+    validation_ordinal_losses.append(epoch_loss[0])
+    validation_ordinal_accuracies.append(epoch_accuracy[0])
+    metrics_tracker.update_predictions(torch.cat(all_preds[0]), torch.cat(all_labels[0]))
+    metrics_tracker.plot_confusion_matrix(epoch=f"epoch_{epoch+1}")
     metrics_tracker.reset_predictions()
     metrics_tracker.plot_metrics()
-
-
     
-
-
     # Early stopping check
     if patience is not None:
         # If is None, we do not apply early stopping logic
-        if epoch_loss.item() < best_val_loss:
-            best_val_loss = epoch_loss.item()
+        if epoch_loss[0] < best_val_loss:
+            best_val_loss = epoch_loss[0]
             epochs_no_improve = 0
             # Save the best model weights
             os.makedirs(f'{config.OUTPUT_DIR}/ckpt', exist_ok=True)
@@ -177,20 +190,30 @@ for epoch in range(config.EPOCHS):
         if early_stop:
             break
 
+    # Aggiorna il learning rate alla fine dell'epoca (solo se sopra il minimo)
+    current_lr = optimizer.param_groups[0]['lr']
+    if current_lr > 1e-6:
+        new_lr = max(current_lr / 6, 1e-6)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = new_lr
+        print(f"Learning rate updated to: {new_lr:.8f}")
+    else:
+        print(f"Learning rate at minimum: {current_lr:.8f}")
+    
     # Save model state dict
     torch.save(model.state_dict(), f'{config.OUTPUT_DIR}/ckpt/latest_model.pth')
 
     # Save training state in a JSON file
     training_state = {
         'epoch': epoch + 1,
-        'best_val_loss': best_val_loss,
-        'epochs_no_improve': epochs_no_improve,
-        'training_losses': training_losses,
-        'training_accuracies': training_accuracies,
-        'validation_ordinal_losses': validation_ordinal_losses,
-        'validation_ordinal_accuracies': validation_ordinal_accuracies,
-        'validation_ce_losses': validation_ce_losses,
-        'validation_ce_accuracies': validation_ce_accuracies
+        'best_val_loss': float(best_val_loss),  # Assicura che sia float Python
+        'epochs_no_improve': int(epochs_no_improve),  # Assicura che sia int Python
+        'training_losses': [float(x) for x in training_losses],  # Converti ogni elemento
+        'training_accuracies': [float(x) for x in training_accuracies],  # Converti ogni elemento
+        'validation_ordinal_losses': [float(x) for x in validation_ordinal_losses],  # Converti ogni elemento
+        'validation_ordinal_accuracies': [float(x) for x in validation_ordinal_accuracies],  # Converti ogni elemento
+        'validation_ce_losses': [float(x) for x in validation_ce_losses],  # Converti ogni elemento
+        'validation_ce_accuracies': [float(x) for x in validation_ce_accuracies]  # Converti ogni elemento
     }
     with open(f'{config.OUTPUT_DIR}/ckpt/training_state.json', 'w') as f:
         json.dump(training_state, f, indent=4)

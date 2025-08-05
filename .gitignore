@@ -5,3 +5,5 @@ test_result
 *.xlsx
 datasets_with_standard_labels
 MODEL_TEST
+dataset_analysis_report.json
+softcpt_train.txt
