@@ -423,6 +423,49 @@ class MultiDataset(Dataset):
             print(f"Class weights for {task}: {weights_tensor}")
         
         return weights_tensor
+    
+    def get_task_weights(self):
+        """
+        Compute task weights for multitask learning based on the number of valid samples per task.
+        
+        Returns:
+            torch.Tensor: Task weights tensor [age_weight, gender_weight, emotion_weight]
+        """
+        if hasattr(self, 'task_weights') and self.task_weights is not None:
+            return self.task_weights
+        
+        # Count valid samples for each task across all datasets
+        task_counts = {'age': 0, 'gender': 0, 'emotion': 0}
+        
+        for dataset in self.datasets:
+            # Count valid samples (non-missing labels) for each task
+            task_counts['age'] += sum(1 for age in dataset.age_groups if age != -1)
+            task_counts['gender'] += sum(1 for gender in dataset.genders if gender != -1)
+            task_counts['emotion'] += sum(1 for emotion in dataset.emotions if emotion != -1)
+        
+        # Calculate inverse frequency weights
+        total_samples = self.total_length
+        weights = []
+        
+        for task in ['age', 'gender', 'emotion']:
+            if task_counts[task] > 0:
+                # Inverse frequency: total_samples / task_samples
+                weight = total_samples / task_counts[task]
+            else:
+                weight = 1.0  # Default weight if no samples
+            weights.append(weight)
+        
+        # Normalize weights so they sum to 3 (number of tasks)
+        weights_tensor = torch.tensor(weights, dtype=torch.float32)
+        weights_tensor = weights_tensor * 3.0 / weights_tensor.sum()
+        
+        self.task_weights = weights_tensor
+        
+        if self.verbose:
+            print(f"Task sample counts: {task_counts}")
+            print(f"Task weights: {weights_tensor}")
+        
+        return weights_tensor
 
 class TaskBalanceDataset(Dataset):
     def __init__(self, dataset_names, transform=None, split="train", 
@@ -691,6 +734,54 @@ class TaskBalanceDataset(Dataset):
             print(f"Class weights for {task}: {weights_tensor}")
         
         return weights_tensor    
+    
+    def get_task_weights(self):
+        """
+        Compute task weights for multitask learning based on the number of valid samples per task.
+        
+        Returns:
+            torch.Tensor: Task weights tensor [age_weight, gender_weight, emotion_weight]
+        """
+        if hasattr(self, 'task_weights') and self.task_weights is not None:
+            return self.task_weights
+        
+        # Count valid samples for each task using the balanced index mapping
+        task_counts = {'age': 0, 'gender': 0, 'emotion': 0}
+        
+        for dataset_idx, local_idx in self.index_map:
+            dataset = self.datasets[dataset_idx]
+            
+            # Count valid samples (non-missing labels) for each task
+            if dataset.age_groups[local_idx] != -1:
+                task_counts['age'] += 1
+            if dataset.genders[local_idx] != -1:
+                task_counts['gender'] += 1
+            if dataset.emotions[local_idx] != -1:
+                task_counts['emotion'] += 1
+        
+        # Calculate inverse frequency weights
+        total_samples = len(self.index_map)
+        weights = []
+        
+        for task in ['age', 'gender', 'emotion']:
+            if task_counts[task] > 0:
+                # Inverse frequency: total_samples / task_samples
+                weight = total_samples / task_counts[task]
+            else:
+                weight = 1.0  # Default weight if no samples
+            weights.append(weight)
+        
+        # Normalize weights so they sum to 3 (number of tasks)
+        weights_tensor = torch.tensor(weights, dtype=torch.float32)
+        weights_tensor = weights_tensor * 3.0 / weights_tensor.sum()
+        
+        self.task_weights = weights_tensor
+        
+        if self.verbose:
+            print(f"Task sample counts: {task_counts}")
+            print(f"Task weights: {weights_tensor}")
+        
+        return weights_tensor
 
 if __name__ == "__main__":
     # Test transforms for BalancedDataset

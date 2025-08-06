@@ -3,7 +3,7 @@ import os
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 
-from dataset.dataset import BaseDataset, MultiDataset, BalancedIdxDataset
+from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
 from .loss import *
@@ -547,16 +547,26 @@ def get_datasets(dataset_names, split='train', transforms=None, dataset_root="..
             transform=transforms,
         )
     else:
-        dataset = MultiDataset(
-            dataset_names=dataset_names,
-            split=split,
-            transform=transforms,
-            datasets_root=dataset_root,
-            all_datasets = len(dataset_names) == 0
-        )
-        if hasattr(config, "NUM_SAMPLES_PER_CLASS"):
-            # If NUM_SAMPLES_PER_CLASS is defined in the config, use it to balance the dataset            
-            dataset = BalancedIdxDataset(dataset, num_samples_per_class=validation_sample)
+        if split == 'train' and hasattr(config, "NUM_SAMPLES_PER_CLASS"):
+            # Use TaskBalanceDataset for training with task balancing
+            balance_task = getattr(config, 'BALANCE_TASK', None)
+            dataset = TaskBalanceDataset(
+                dataset_names=dataset_names,
+                split=split,
+                transform=transforms,
+                datasets_root=dataset_root,
+                all_datasets=len(dataset_names) == 0,
+                balance_task=balance_task
+            )
+        else:
+            # Use regular MultiDataset for validation or when no balancing is needed
+            dataset = MultiDataset(
+                dataset_names=dataset_names,
+                split=split,
+                transform=transforms,
+                datasets_root=dataset_root,
+                all_datasets=len(dataset_names) == 0
+            )
     
     return dataset
 

@@ -15,7 +15,9 @@
         ["surprise", "fear", "disgust", "happy", "sad", "angry", "neutral"]
     ],
     "PROMPT_GEN_TYPE": "lin",
-    "DATASET_NAMES": [],
+    "DATASET_NAMES": ["CelebA_HQ", "FairFace", "LFW", "MiviaGender", "RAF-DB", "TestDataset", "UTKFace"],
+    "VALIDATION_DATASET_NAMES": ["CelebA_HQ", "FairFace", "LFW", "MiviaGender", "RAF-DB", "TestDataset", "UTKFace"],
+    "BALANCE_TASK": {"emotion": 0.25},
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "TRAIN_SPLIT": 0.9,
     "SEED": 2025,   
@@ -27,4 +29,5 @@
     ],
     "EARLY_STOPPING_PATIENCE": 5,
     "VERBOSE": false
+
 }

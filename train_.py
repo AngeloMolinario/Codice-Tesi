@@ -7,7 +7,7 @@ from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
-from dataset.dataset import BaseDataset, MultiDataset, BalancedIdxDataset
+from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
 from training import training_functions
@@ -68,14 +68,53 @@ print(f"Total trainable parameter values: {total_trainable_params}")
 training_dataset = validation_dataset = None
 
 if hasattr(config, 'NUM_SAMPLES_PER_CLASS'):
-    dataset = get_datasets(config.DATASET_NAMES, transforms=img_transform, split="train", dataset_root=config.DATASET_ROOT, config=config, validation_sample=50)    
-    training_dataset = BalancedIdxDataset(dataset.dataset, num_samples_per_class=config.NUM_SAMPLES_PER_CLASS, ignore_indices=dataset.balanced_indices)
-    validation_dataset = dataset
+    # Use TaskBalanceDataset for training with task balancing
+    balance_task = getattr(config, 'BALANCE_TASK', None)  # Get balance task from config if available
+    training_dataset = TaskBalanceDataset(
+        dataset_names=config.DATASET_NAMES, 
+        transforms=img_transform, 
+        split="train", 
+        datasets_root=config.DATASET_ROOT, 
+        verbose=True,
+        balance_task=balance_task
+    )
+    
+    # Use validation dataset names if specified, otherwise use training dataset names
+    validation_dataset_names = getattr(config, 'VALIDATION_DATASET_NAMES', config.DATASET_NAMES)
+    if not validation_dataset_names:  # If empty list, use training dataset names
+        validation_dataset_names = config.DATASET_NAMES
+    
+    # Use MultiDataset for validation with test split
+    validation_dataset = MultiDataset(
+        dataset_names=validation_dataset_names, 
+        transforms=img_transform, 
+        split="test", 
+        datasets_root=config.DATASET_ROOT, 
+        verbose=True
+    )
 else:
-    dataset = get_datasets(config.DATASET_NAMES, transforms=img_transform, split="train", dataset_root=config.DATASET_ROOT, config=config)
-    train_size = int(config.TRAIN_SPLIT * len(dataset))
-    val_size = len(dataset) - train_size
-    training_dataset, validation_dataset = random_split(dataset, [train_size, val_size], generator=generator)
+    # Use TaskBalanceDataset for training (without specific balancing)
+    training_dataset = TaskBalanceDataset(
+        dataset_names=config.DATASET_NAMES, 
+        transforms=img_transform, 
+        split="train", 
+        datasets_root=config.DATASET_ROOT, 
+        verbose=True
+    )
+    
+    # Use validation dataset names if specified, otherwise use training dataset names
+    validation_dataset_names = getattr(config, 'VALIDATION_DATASET_NAMES', config.DATASET_NAMES)
+    if not validation_dataset_names:  # If empty list, use training dataset names
+        validation_dataset_names = config.DATASET_NAMES
+    
+    # Use MultiDataset for validation with test split  
+    validation_dataset = MultiDataset(
+        dataset_names=validation_dataset_names, 
+        transforms=img_transform, 
+        split="test", 
+        datasets_root=config.DATASET_ROOT, 
+        verbose=True
+    )
 
 
 print("training_dataset length:", len(training_dataset))
