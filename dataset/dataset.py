@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from PIL import Image
 import random
+import torchvision.transforms as tform
 
 def map_age_to_group(age):
     """
@@ -91,7 +92,8 @@ def map_age_to_group(age):
         return -1  # Cannot convert to numeric  
 
 class BaseDataset(Dataset):
-    def __init__(self, root:str, transform=None, split="train"):
+    def __init__(self, root:str, transform=None, split="train", verbose=False):
+        self.verbose = verbose
         self.root = root
         self.transform = transform
         self.split = split
@@ -118,25 +120,37 @@ class BaseDataset(Dataset):
         self.emotions = self.data['Facial Emotion'].fillna(-1).values
 
     def __len__(self):
-        # Return the number of images in the dataset        
         return len(self.data)
 
     def __getitem__(self, idx):
+        '''
+        Get item by index.
+        Return a tuple (image, label) where:
+        - image is a tensor of shape (3, H, W) after applying transforms
+        - label is a list of tensors with attributes:
+                 0: age group (0-8)
+                 1: gender (0-1)
+                 2: emotion (0-6)
+        '''
         # Load an image and its corresponding label
-        img_path = self.img_paths[idx]  # Path già preprocessato
+        img_path = self.img_paths[idx]
         image = Image.open(img_path).convert('RGB')
         
         # Apply transforms if provided
         if self.transform:
             image = self.transform(image)
+        else:
+            # If no transform is provided, convert to tensor
+            image = tform.ToTensor()(image)
         
-        # Create label dictionary with all attributes (missing values are -1)
+        # Create label array with all attributes (missing values are -1)
         # Age is now returned as age group instead of raw age
-        label = {
-            'gender': torch.tensor(self.genders[idx], dtype=torch.long),
-            'age': torch.tensor(self.age_groups[idx], dtype=torch.long),
-            'emotion': torch.tensor(self.emotions[idx], dtype=torch.long)
-        }
+        label = [
+            torch.tensor(self.age_groups[idx], dtype=torch.long),
+            torch.tensor(self.genders[idx], dtype=torch.long),            
+            torch.tensor(self.emotions[idx], dtype=torch.long)
+        ]
+        
         
         return image, label
 
@@ -150,15 +164,19 @@ class BaseDataset(Dataset):
         Returns:
             torch.Tensor: Class weights tensor
         """
+
+        # Check if class weights have already been computed
         if not hasattr(self, 'class_weights'):
             self.class_weights = {}
 
         if self.class_weights.get(task, None) is not None:
             return self.class_weights[task]
-            
-        print(f"Computing class weights for task: {task} (BaseDataset)")
 
-        # Aggregate data from this dataset only
+
+        if self.verbose:    
+            print(f"Computing class weights for task: {task} (BaseDataset)")
+
+        # Get the relevant task data for which to compute weights
         if task == 'age':
             all_task_data = self.age_groups
         elif task == 'gender':
@@ -183,22 +201,27 @@ class BaseDataset(Dataset):
         # Get all class indices and sort them
         class_indices = sorted(class_counts.keys())
         
+
+        # Compute the inverse frequency weights for the task's classes
+        # Weights are computed as total_samples / (num_classes * samples_per_class)
         weights_array = []
         for class_idx in class_indices:
             count = class_counts[class_idx]
             weight = total_valid_samples / (len(class_counts) * count)
             weights_array.append(weight)
         
+
         weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
         self.class_weights[task] = weights_tensor
         
-        print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
-        print(f"Class weights for {task}: {weights_tensor}")
+        if self.verbose:
+            print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
+            print(f"Class weights for {task}: {weights_tensor}")
         
         return weights_tensor
 
 class MultiDataset(Dataset):
-    def __init__(self, dataset_names, transform=None, split="train", datasets_root="datasets_with_standard_labels", all_datasets=False):
+    def __init__(self, dataset_names, transform=None, split="train", datasets_root="datasets_with_standard_labels", all_datasets=False, verbose=False):
         """
         Initialize MultiDataset with multiple datasets.
         
@@ -208,16 +231,19 @@ class MultiDataset(Dataset):
             split (str): Split to use ("train" or "test")
             datasets_root (str): Root directory containing all datasets
             all_datasets: (bool): if True, load all datasets in the root directory and ignore dataset_names
+            verbose (bool): if True, print detailed information about the loading process
         """
         self.dataset_names = dataset_names
         self.transform = transform
         self.split = split
         self.datasets_root = datasets_root
+        self.verbose = verbose
         
         if all_datasets:
             # If all_datasets is True, load all datasets in the root directory
             self.dataset_names = [d for d in os.listdir(datasets_root) if os.path.isdir(os.path.join(datasets_root, d))]
-            print(f"Loading all datasets: {self.dataset_names}")
+            if self.verbose:
+                print(f"Loading all datasets: {self.dataset_names}")
 
         # Load all datasets
         self.datasets = []
@@ -229,12 +255,14 @@ class MultiDataset(Dataset):
             dataset_path = os.path.join(datasets_root, dataset_name)
             if os.path.exists(os.path.join(dataset_path, split)):    
                 try:
+                    # If the path to the split exists, load the dataset using the BaseDataset class
                     dataset = BaseDataset(root=dataset_path, transform=transform, split=split)
                     self.datasets.append(dataset)
                     self.dataset_lengths.append(len(dataset))
                     self.cumulative_lengths.append(self.cumulative_lengths[-1] + len(dataset))
                     successfully_loaded_datasets.append(dataset_name)
-                    print(f"Loaded {len(dataset)} samples from {dataset_path}/{split}")
+                    if self.verbose:
+                        print(f"Loaded {len(dataset)} samples from {dataset_path}/{split}")
                 except Exception as e:
                     print(f"Warning: Could not load dataset {dataset_name}: {e}")
             else:
@@ -249,10 +277,11 @@ class MultiDataset(Dataset):
         # Total length is the sum of all dataset lengths
         self.total_length = self.cumulative_lengths[-1]
         
-        print(f"Loaded {len(self.datasets)} datasets with total {self.total_length} samples:")
-        for i, dataset_name in enumerate(self.dataset_names):
-            if i < len(self.datasets):
-                print(f"  - {dataset_name}: {self.dataset_lengths[i]} samples")
+        if self.verbose:
+            print(f"Loaded {len(self.datasets)} datasets with total {self.total_length} samples:")
+            for i, dataset_name in enumerate(self.dataset_names):
+                if i < len(self.datasets):
+                    print(f"  - {dataset_name}: {self.dataset_lengths[i]} samples")
 
     def __len__(self):
         return self.total_length
@@ -267,6 +296,7 @@ class MultiDataset(Dataset):
         Returns:
             tuple: (image, label) with the same format as BaseDataset
         """
+        # Check if the index is within the valid range
         if idx >= self.total_length or idx < 0:
             raise IndexError(f"Index {idx} out of range for dataset of size {self.total_length}")
         
@@ -285,7 +315,7 @@ class MultiDataset(Dataset):
     
     def get_dataset_info(self, compute_stats=False):
         """
-        Get information about the loaded datasets.
+        Utility function to get information about the loaded dataset.
         
         Args:
             compute_stats (bool): If True, compute label distributions and missing value counts (expensive).
@@ -340,8 +370,9 @@ class MultiDataset(Dataset):
 
         if self.class_weights.get(task, None) is not None:
             return self.class_weights[task]
-            
-        print(f"Computing class weights for task: {task}")
+        
+        if self.verbose:
+            print(f"Computing class weights for task: {task}")
         
         # Aggregate data from all datasets
         if task == 'age':
@@ -386,8 +417,9 @@ class MultiDataset(Dataset):
         weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
         self.class_weights[task] = weights_tensor
         
-        print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
-        print(f"Class weights for {task}: {weights_tensor}")
+        if self.verbose:
+            print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
+            print(f"Class weights for {task}: {weights_tensor}")
         
         return weights_tensor    
 
