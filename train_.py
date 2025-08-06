@@ -72,7 +72,7 @@ if hasattr(config, 'NUM_SAMPLES_PER_CLASS'):
     balance_task = getattr(config, 'BALANCE_TASK', None)  # Get balance task from config if available
     training_dataset = TaskBalanceDataset(
         dataset_names=config.DATASET_NAMES, 
-        transforms=img_transform, 
+        transform=img_transform, 
         split="train", 
         datasets_root=config.DATASET_ROOT, 
         verbose=True,
@@ -87,7 +87,7 @@ if hasattr(config, 'NUM_SAMPLES_PER_CLASS'):
     # Use MultiDataset for validation with test split
     validation_dataset = MultiDataset(
         dataset_names=validation_dataset_names, 
-        transforms=img_transform, 
+        transform=img_transform, 
         split="test", 
         datasets_root=config.DATASET_ROOT, 
         verbose=True
@@ -96,7 +96,7 @@ else:
     # Use TaskBalanceDataset for training (without specific balancing)
     training_dataset = TaskBalanceDataset(
         dataset_names=config.DATASET_NAMES, 
-        transforms=img_transform, 
+        transform=img_transform, 
         split="train", 
         datasets_root=config.DATASET_ROOT, 
         verbose=True
