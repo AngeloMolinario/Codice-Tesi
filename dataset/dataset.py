@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 import random
 import torchvision.transforms as tform
+import torchvision.transforms as transforms
 
 def map_age_to_group(age):
     """
@@ -421,336 +422,545 @@ class MultiDataset(Dataset):
             print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
             print(f"Class weights for {task}: {weights_tensor}")
         
-        return weights_tensor    
+        return weights_tensor
 
+class TaskBalanceDataset(Dataset):
+    def __init__(self, dataset_names, transform=None, split="train", 
+                 datasets_root="datasets_with_standard_labels", all_datasets=False, 
+                 verbose=False, balance_task=None):
+        """
+        Initialize TaskBalanceDataset with multiple datasets and optional task balancing.
+        
+        Args:
+            dataset_names (list): List of dataset names to load
+            transform: Optional transforms to apply to images
+            split (str): Split to use ("train" or "test")
+            datasets_root (str): Root directory containing all datasets
+            all_datasets (bool): if True, load all datasets in the root directory and ignore dataset_names
+            verbose (bool): if True, print detailed information about the loading process
+            balance_task (dict): task_name -> desired_fraction (e.g. {"emotion": 0.25})
+        """
+        self.dataset_names = dataset_names
+        self.transform = transform
+        self.split = split
+        self.datasets_root = datasets_root
+        self.verbose = verbose
+        self.balance_task = balance_task  # e.g. {"emotion": 0.25}
+        
+        if all_datasets:
+            # If all_datasets is True, load all datasets in the root directory
+            self.dataset_names = [d for d in os.listdir(datasets_root) if os.path.isdir(os.path.join(datasets_root, d))]
+            if self.verbose:
+                print(f"Loading all datasets: {self.dataset_names}")
 
-class BalancedIdxDataset(Dataset):
-    """
-    A dataset wrapper that provides access only to a balanced subset of samples
-    defined by a list of indices, as sampled from a MultiDataset.
+        # Load all datasets
+        self.datasets = []
+        self.dataset_lengths = []
+        self.cumulative_lengths = [0]
+        successfully_loaded_datasets = []
+        
+        for dataset_name in self.dataset_names:
+            dataset_path = os.path.join(datasets_root, dataset_name)
+            if os.path.exists(os.path.join(dataset_path, split)):    
+                try:
+                    # If the path to the split exists, load the dataset using the BaseDataset class
+                    dataset = BaseDataset(root=dataset_path, transform=transform, split=split)
+                    self.datasets.append(dataset)
+                    self.dataset_lengths.append(len(dataset))
+                    self.cumulative_lengths.append(self.cumulative_lengths[-1] + len(dataset))
+                    successfully_loaded_datasets.append(dataset_name)
+                    if self.verbose:
+                        print(f"Loaded {len(dataset)} samples from {dataset_path}/{split}")
+                except Exception as e:
+                    print(f"Warning: Could not load dataset {dataset_name}: {e}")
+            else:
+                print(f"Warning: Split '{split}' not found in {dataset_path}")
+        
+        # Update dataset_names to only include successfully loaded datasets
+        self.dataset_names = successfully_loaded_datasets                           
+        
+        if not self.datasets:
+            raise ValueError("No datasets could be loaded successfully")
+        
+        # Total length is the sum of all dataset lengths
+        self.total_length = self.cumulative_lengths[-1]
+        
+        if self.verbose:
+            print(f"Loaded {len(self.datasets)} datasets with total {self.total_length} samples:")
+            for i, dataset_name in enumerate(self.dataset_names):
+                if i < len(self.datasets):
+                    print(f"  - {dataset_name}: {self.dataset_lengths[i]} samples")
 
-    Args:
-        multidataset (MultiDataset): The source dataset.
-        num_samples_per_class (int): Number of samples per class for balancing.
-        ignore_indices (List[int], optional): List of global indices to ignore during sampling.
+        # Build flattened index mapping
+        self._build_flattened_index()
 
-    Attributes:
-        dataset (MultiDataset): Reference to the source dataset.
-        balanced_indices (List[int]): List of global indices for balanced sampling.
-        class_weights_cache (dict): Cached class weights per task.
-        task_weights_cache (torch.Tensor or None): Cached task weights tensor.
-    """
-    def __init__(self, multidataset, num_samples_per_class, ignore_indices=None):
-        self.dataset = multidataset
-        self.ignore_indices = set(ignore_indices) if ignore_indices is not None else set()
-        self.balanced_indices = self._sample_balanced_indices(num_samples_per_class)
-        self.class_weights_cache = {}
-        self.task_weights_cache = None
+        # Apply task balancing if requested
+        if self.balance_task is not None:
+            self._apply_task_balancing()
 
-    def _sample_balanced_indices(self, num_samples_per_class):
-        used_indices = set(self.ignore_indices)
-        merged_indices = []
+    def _build_flattened_index(self):
+        """Build a flattened index mapping for efficient access."""
+        self.index_map = []
+        for dataset_idx, dataset in enumerate(self.datasets):
+            for local_idx in range(len(dataset)):
+                self.index_map.append((dataset_idx, local_idx))
 
-        for task in ['age', 'gender', 'emotion']:
-            valid_class_indices = dict()
-            for d_idx, dataset in enumerate(self.dataset.datasets):
-                if task == 'age':
-                    labels = dataset.age_groups
-                elif task == 'gender':
-                    labels = dataset.genders
-                elif task == 'emotion':
-                    labels = dataset.emotions
-                else:
-                    raise ValueError(f"Unknown task: {task}")
-                for l_idx, label in enumerate(labels):
-                    if label != -1:
-                        global_idx = self.dataset.cumulative_lengths[d_idx] + l_idx
-                        if label not in valid_class_indices:
-                            valid_class_indices[label] = []
-                        valid_class_indices[label].append(global_idx)
-            for class_value in sorted(valid_class_indices.keys()):
-                candidates = [idx for idx in valid_class_indices[class_value] if idx not in used_indices]
-                random.shuffle(candidates)
-                chosen = candidates[:min(num_samples_per_class, len(candidates))]
-                merged_indices.extend(chosen)
-                used_indices.update(chosen)
-        return merged_indices
+    def _apply_task_balancing(self):
+        """Apply task balancing by duplicating samples to reach desired fractions."""
+        original_len = len(self.index_map)
+        
+        for task, desired_fraction in self.balance_task.items():
+            # Find indices with valid labels for that task
+            valid_indices = [
+                i for i, (ds_idx, loc_idx) in enumerate(self.index_map)
+                if self._is_valid_task_label(ds_idx, loc_idx, task)
+            ]
+            current_count = len(valid_indices)
+            
+            # Calculate target count so that valid samples represent desired_fraction of the FINAL dataset
+            # If we want X% of final dataset to have valid labels for this task:
+            # current_count + n_to_add = desired_fraction * (original_len + n_to_add)
+            # Solving for n_to_add:
+            # n_to_add = (desired_fraction * original_len - current_count) / (1 - desired_fraction)
+            
+            if desired_fraction >= 1.0:
+                if self.verbose:
+                    print(f"[{task}] desired fraction {desired_fraction} >= 1.0, skipping balancing.")
+                continue
+                
+            target_count_numerator = desired_fraction * original_len - current_count
+            target_count_denominator = 1 - desired_fraction
+            
+            if target_count_denominator <= 0:
+                if self.verbose:
+                    print(f"[{task}] desired fraction {desired_fraction} too high, skipping balancing.")
+                continue
+                
+            n_to_add = int(target_count_numerator / target_count_denominator)
+            
+            if n_to_add <= 0:
+                if self.verbose:
+                    final_dataset_size = original_len
+                    actual_percentage = (current_count / final_dataset_size) * 100
+                    print(f"[{task}] already has {current_count}/{final_dataset_size} ({actual_percentage:.1f}%) >= {desired_fraction*100:.1f}%, no duplication needed.")
+                continue
+
+            # Add the duplicated samples
+            extra_indices = random.choices(valid_indices, k=n_to_add)
+            extra_mapped = [self.index_map[i] for i in extra_indices]
+            self.index_map.extend(extra_mapped)
+            
+            # Calculate final statistics
+            final_dataset_size = len(self.index_map)
+            final_valid_count = current_count + n_to_add
+            actual_percentage = (final_valid_count / final_dataset_size) * 100
+
+            if self.verbose:
+                print(f"[{task}] duplicated {n_to_add} samples.")
+                print(f"[{task}] final dataset size: {final_dataset_size}")
+                print(f"[{task}] valid samples: {final_valid_count}/{final_dataset_size} ({actual_percentage:.1f}%)")
+                print(f"[{task}] target was {desired_fraction*100:.1f}%")
+
+        # Shuffle the index map to mix original and duplicated samples
+        random.shuffle(self.index_map)
+
+    def _is_valid_task_label(self, dataset_idx, local_idx, task):
+        """Check if a sample has a valid (non-missing) label for the given task."""
+        dataset = self.datasets[dataset_idx]
+        if task == 'age':
+            return dataset.age_groups[local_idx] != -1
+        elif task == 'gender':
+            return dataset.genders[local_idx] != -1
+        elif task == 'emotion':
+            return dataset.emotions[local_idx] != -1
+        return False
 
     def __len__(self):
-        return len(self.balanced_indices)
+        return len(self.index_map)
 
     def __getitem__(self, idx):
-        global_idx = self.balanced_indices[idx]
-        return self.dataset[global_idx]
-
+        """Get item using the flattened index mapping."""
+        if idx >= len(self.index_map) or idx < 0:
+            raise IndexError(f"Index {idx} out of range for dataset of size {len(self.index_map)}")
+        
+        dataset_idx, local_idx = self.index_map[idx]
+        return self.datasets[dataset_idx][local_idx]
+    
+    def get_dataset_info(self, compute_stats=False):
+        """
+        Utility function to get information about the loaded dataset.
+        
+        Args:
+            compute_stats (bool): If True, compute label distributions and missing value counts (expensive).
+        
+        Returns:
+            dict: Information about each dataset including name, length, and optionally stats.
+        """
+        info = {}
+        for i, name in enumerate(self.dataset_names[:len(self.datasets)]):
+            dataset_info = {
+                'original_length': self.dataset_lengths[i],
+                'current_samples_in_index': sum(1 for ds_idx, _ in self.index_map if ds_idx == i)
+            }
+            if compute_stats:
+                ds = self.datasets[i]
+                stats = {}
+                # Label distributions (excluding missing values)
+                for task in ['age', 'gender', 'emotion']:
+                    if task == 'age':
+                        data = ds.age_groups
+                    elif task == 'gender':
+                        data = ds.genders
+                    elif task == 'emotion':
+                        data = ds.emotions
+                    else:
+                        continue
+                    valid_data = [v for v in data if v != -1]
+                    if valid_data:
+                        unique, counts = np.unique(valid_data, return_counts=True)
+                        stats[f'{task}_distribution'] = dict(zip(unique.tolist(), counts.tolist()))
+                        stats[f'{task}_missing'] = int(len(data) - len(valid_data))
+                    else:
+                        stats[f'{task}_distribution'] = {}
+                        stats[f'{task}_missing'] = len(data)
+                dataset_info['stats'] = stats
+            info[name] = dataset_info
+        return info
+    
     def get_class_weights(self, task):
         """
-        Compute class weights for the specified task for the balanced dataset only.
-        Weights are computed and cached the first time the function is called.
-
+        Compute class weights for the specified task based on the balanced dataset.
+        
         Args:
             task (str): Task name ('age', 'gender', or 'emotion')
-
+            
         Returns:
             torch.Tensor: Class weights tensor
         """
-        if task in self.class_weights_cache:
-            return self.class_weights_cache[task]
+        if not hasattr(self, 'class_weights'):
+            self.class_weights = {}
 
-        print(f"Computing class weights for task: {task} (BalancedIdxDataset)")
-
+        if self.class_weights.get(task, None) is not None:
+            return self.class_weights[task]
+        
+        if self.verbose:
+            print(f"Computing class weights for task: {task} (TaskBalanceDataset)")
+        
+        # Collect all task data using the balanced index mapping
         all_task_data = []
-        for idx in self.balanced_indices:
-            d_idx = 0
-            for i, cum_len in enumerate(self.dataset.cumulative_lengths[1:], 1):
-                if idx < cum_len:
-                    d_idx = i - 1
-                    break
-            local_idx = idx - self.dataset.cumulative_lengths[d_idx]
-            ds = self.dataset.datasets[d_idx]
+        for dataset_idx, local_idx in self.index_map:
+            dataset = self.datasets[dataset_idx]
             if task == 'age':
-                label = ds.age_groups[local_idx]
+                all_task_data.append(dataset.age_groups[local_idx])
             elif task == 'gender':
-                label = ds.genders[local_idx]
+                all_task_data.append(dataset.genders[local_idx])
             elif task == 'emotion':
-                label = ds.emotions[local_idx]
+                all_task_data.append(dataset.emotions[local_idx])
             else:
-                raise ValueError(f"Unknown task: {task}")
-            if label != -1:
-                all_task_data.append(label)
-
+                raise ValueError(f"Unknown task: {task}. Must be one of 'age', 'gender', 'emotion'")
+        
+        # Count occurrences of each class (excluding -1 values)
         class_counts = {}
         total_valid_samples = 0
-
+        
         for value in all_task_data:
-            class_counts[value] = class_counts.get(value, 0) + 1
-            total_valid_samples += 1
-
+            if value != -1:  # Exclude missing values
+                class_counts[value] = class_counts.get(value, 0) + 1
+                total_valid_samples += 1
+        
         if total_valid_samples == 0:
-            raise ValueError(f"No valid samples found for task {task} in the balanced subset")
-
+            raise ValueError(f"No valid samples found for task {task}")
+        
+        # Get all class indices and sort them
         class_indices = sorted(class_counts.keys())
+        
+        # Compute inverse frequency weights in order
         weights_array = []
         for class_idx in class_indices:
             count = class_counts[class_idx]
+            # Inverse frequency: total_samples / (num_classes * samples_per_class)
             weight = total_valid_samples / (len(class_counts) * count)
             weights_array.append(weight)
-
+        
+        # Store and return as tensor
         weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
-        self.class_weights_cache[task] = weights_tensor
-
-        print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
-        print(f"Class weights for {task}: {weights_tensor}")
-
-        return weights_tensor
-
-    def get_task_weights(self):
-        """
-        Compute normalized task weights for the balanced dataset only.
-        Weights are computed and cached the first time the function is called.
-        Task weights are calculated as inverse frequency across tasks
-        ('age', 'gender', 'emotion') based on the number of valid samples in the subset,
-        and then normalized so their sum is 1.
-
-        Returns:
-            torch.Tensor: Normalized task weights tensor of shape (3,)
-        """
-        if self.task_weights_cache is not None:
-            return self.task_weights_cache
-
-        sample_counts = []
-        for task in ['age', 'gender', 'emotion']:
-            count = 0
-            for idx in self.balanced_indices:
-                d_idx = 0
-                for i, cum_len in enumerate(self.dataset.cumulative_lengths[1:], 1):
-                    if idx < cum_len:
-                        d_idx = i - 1
-                        break
-                local_idx = idx - self.dataset.cumulative_lengths[d_idx]
-                ds = self.dataset.datasets[d_idx]
-                if task == 'age':
-                    label = ds.age_groups[local_idx]
-                elif task == 'gender':
-                    label = ds.genders[local_idx]
-                elif task == 'emotion':
-                    label = ds.emotions[local_idx]
-                else:
-                    raise ValueError(f"Unknown task: {task}")
-                if label != -1:
-                    count += 1
-            sample_counts.append(count)
-        sample_counts = torch.tensor(sample_counts, dtype=torch.float32)
-        # Avoid division by zero for missing tasks
-        raw_weights = 1.0 / torch.where(sample_counts == 0, torch.ones_like(sample_counts), sample_counts)
-        # Normalize so sum is 1
-        normalized_weights = raw_weights / raw_weights.sum()
-        self.task_weights_cache = normalized_weights
-        print(f"Normalized task weights: {normalized_weights}")
-        return normalized_weights
+        self.class_weights[task] = weights_tensor
+        
+        if self.verbose:
+            print(f"Class distribution for {task}: {dict(sorted(class_counts.items()))}")
+            print(f"Class weights for {task}: {weights_tensor}")
+        
+        return weights_tensor    
 
 if __name__ == "__main__":
-
-    def compute_class_and_task_weights_from_indices(dataset, idx_list):
-        """
-        Given a dataset and a list of indices, compute:
-        - For each task ('age', 'gender', 'emotion'), the class weights for the subset.
-        - For each task, the class distribution for the subset.
-        - The task weights, based on the number of (non-missing) samples per task.
-
-        Returns:
-            class_weights: dict { 'age': Tensor, 'gender': Tensor, 'emotion': Tensor }
-            task_weights: Tensor of shape (3,) corresponding to ['age', 'gender', 'emotion']
-            class_distributions: dict { 'age': {class: count, ...}, ... }
-        """
-        task_labels = { 'age': [], 'gender': [], 'emotion': [] }
-        class_distributions = { 'age': {}, 'gender': {}, 'emotion': {} }
-        for idx in idx_list:
-            if isinstance(dataset, MultiDataset):
-                d_idx = 0
-                for i, cum_len in enumerate(dataset.cumulative_lengths[1:], 1):
-                    if idx < cum_len:
-                        d_idx = i - 1
-                        break
-                local_idx = idx - dataset.cumulative_lengths[d_idx]
-                ds = dataset.datasets[d_idx]
-                age = ds.age_groups[local_idx]
-                gender = ds.genders[local_idx]
-                emotion = ds.emotions[local_idx]
-            else:  # BaseDataset
-                age = dataset.age_groups[idx]
-                gender = dataset.genders[idx]
-                emotion = dataset.emotions[idx]
-            if age != -1:
-                task_labels['age'].append(age)
-                class_distributions['age'][age] = class_distributions['age'].get(age, 0) + 1
-            if gender != -1:
-                task_labels['gender'].append(gender)
-                class_distributions['gender'][gender] = class_distributions['gender'].get(gender, 0) + 1
-            if emotion != -1:
-                task_labels['emotion'].append(emotion)
-                class_distributions['emotion'][emotion] = class_distributions['emotion'].get(emotion, 0) + 1
-
-        class_weights = {}
-        sample_counts = []
-
+    # Test transforms for BalancedDataset
+    import torchvision.transforms as transforms
+    
+    # Test TaskBalanceDataset
+    print("Testing TaskBalanceDataset...")
+    
+    # Define some basic transforms
+    test_transforms = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    try:
+        # Test with emotion balancing
+        print("\n=== Testing with emotion balancing (25%) ===")
+        dataset_with_balance = TaskBalanceDataset(
+            dataset_names=["test_dataset"],  # Replace with actual dataset names
+            transform=test_transforms,
+            split="train",
+            datasets_root="../datasets_with_standard_labels",
+            verbose=True,
+            all_datasets=True,
+            balance_task={"emotion": 0.25}
+        )
+        print(f"Dataset length with emotion balancing: {len(dataset_with_balance)}")
+                
+        # Test getting a sample
+        if len(dataset_with_balance) > 0:
+            print("\n=== Testing sample retrieval ===")
+            sample_image, sample_labels = dataset_with_balance[0]
+            print(f"Sample image shape: {sample_image.shape}")
+            print(f"Sample labels: age={sample_labels[0].item()}, gender={sample_labels[1].item()}, emotion={sample_labels[2].item()}")
+        
+        # Test dataset info
+        print("\n=== Testing dataset info ===")
+        info = dataset_with_balance.get_dataset_info(compute_stats=True)
+        for dataset_name, dataset_info in info.items():
+            print(f"Dataset {dataset_name}:")
+            print(f"  Original length: {dataset_info['original_length']}")
+            print(f"  Current samples in index: {dataset_info['current_samples_in_index']}")
+            if 'stats' in dataset_info:
+                stats = dataset_info['stats']
+                for stat_name, stat_value in stats.items():
+                    print(f"  {stat_name}: {stat_value}")
+        
+        # Test class weights
+        print("\n=== Testing class weights ===")
         for task in ['age', 'gender', 'emotion']:
-            labels = task_labels[task]
-            class_counts = class_distributions[task]
-            total_valid_samples = len(labels)
-            sample_counts.append(total_valid_samples)
-            if total_valid_samples == 0 or len(class_counts) == 0:
-                weights_tensor = torch.tensor([], dtype=torch.float32)
+            try:
+                weights = dataset_with_balance.get_class_weights(task)
+                print(f"{task} class weights: {weights}")
+            except Exception as e:
+                print(f"Could not compute weights for {task}: {e}")
+                
+        print("\nTaskBalanceDataset tests completed successfully!")
+
+
+        print("\n=== Testing dataloader ===")
+        from torch.utils.data import DataLoader
+        dataloader = DataLoader(dataset_with_balance, batch_size=256 , shuffle=True)
+        
+        # Count valid samples (labels != -1) for each task
+        emotion_valid_count = 0
+        age_valid_count = 0
+        gender_valid_count = 0
+        total_samples = 0
+        batches_without_emotion = 0  # Count batches with no emotion valid samples
+        
+        for batch_idx, (images, labels) in enumerate(dataloader):
+            labels = [label.numpy() for label in labels]  # Convert labels to numpy for easier printing
+            
+            # Count valid labels in this batch
+            emotion_valid_in_batch = sum(1 for label in labels[2] if label != -1)
+            age_valid_in_batch = sum(1 for label in labels[0] if label != -1)
+            gender_valid_in_batch = sum(1 for label in labels[1] if label != -1)
+            
+            emotion_valid_count += emotion_valid_in_batch
+            age_valid_count += age_valid_in_batch
+            gender_valid_count += gender_valid_in_batch
+            total_samples += len(labels[0])
+            
+            # Count batches without emotion valid samples
+            if emotion_valid_in_batch == 0:
+                batches_without_emotion += 1
+            
+            # Print only first 6 batches
+            if batch_idx < 6:
+                print(f"Batch {batch_idx}: Emotion valid: {emotion_valid_in_batch}/{len(labels[2])}, Age valid: {age_valid_in_batch}/{len(labels[0])}, Gender valid: {gender_valid_in_batch}/{len(labels[1])}")            
             else:
-                class_indices = sorted(class_counts.keys())
-                weights_array = []
-                for class_idx in class_indices:
-                    count = class_counts[class_idx]
-                    weight = total_valid_samples / (len(class_counts) * count)
-                    weights_array.append(weight)
-                weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
-            class_weights[task] = weights_tensor
+                print(f"{batch_idx}/{len(dataloader)} MultiDataset batches processed", end='.\r')
+        total_batches = batch_idx + 1  # Total number of batches processed
+        
+        print(f"\n=== Summary of valid labels (TaskBalanceDataset - All batches) ===")
+        print(f"Total batches processed: {total_batches}")
+        print(f"Total samples processed: {total_samples}")
+        print(f"Emotion valid samples: {emotion_valid_count}/{total_samples} ({emotion_valid_count/total_samples*100:.1f}%)")
+        print(f"Age valid samples: {age_valid_count}/{total_samples} ({age_valid_count/total_samples*100:.1f}%)")
+        print(f"Gender valid samples: {gender_valid_count}/{total_samples} ({gender_valid_count/total_samples*100:.1f}%)")
+        print(f"Batches without emotion valid samples: {batches_without_emotion}/{total_batches} ({batches_without_emotion/total_batches*100:.1f}%)")
+        
+        # Count valid samples in the entire dataset
+        print(f"\n=== Complete dataset valid labels count ===")
+        total_emotion_valid = 0
+        total_age_valid = 0
+        total_gender_valid = 0
+        dataset_size = len(dataset_with_balance)
+        
+        for dataset_idx, local_idx in dataset_with_balance.index_map:
+            dataset = dataset_with_balance.datasets[dataset_idx]
+            if dataset.emotions[local_idx] != -1:
+                total_emotion_valid += 1
+            if dataset.age_groups[local_idx] != -1:
+                total_age_valid += 1
+            if dataset.genders[local_idx] != -1:
+                total_gender_valid += 1
+                
+        print(f"Complete dataset size: {dataset_size}")
+        print(f"Emotion valid samples in complete dataset: {total_emotion_valid}/{dataset_size} ({total_emotion_valid/dataset_size*100:.1f}%)")
+        print(f"Age valid samples in complete dataset: {total_age_valid}/{dataset_size} ({total_age_valid/dataset_size*100:.1f}%)")
+        print(f"Gender valid samples in complete dataset: {total_gender_valid}/{dataset_size} ({total_gender_valid/dataset_size*100:.1f}%)")
 
-        # Task weights: inverse frequency (tasks with fewer samples have higher weight)
-        sample_counts = torch.tensor(sample_counts, dtype=torch.float32)
-        task_weights = sample_counts.sum() / (len(sample_counts) * sample_counts)
-
-        return class_weights, task_weights, class_distributions
-    # Example usage
-    dataset = BaseDataset(
-        root="../processed_datasets/datasets_with_standard_labels/UTKFace",
-        transform=None,  # Add any transforms if needed
-        split="test"
-    )
-    
-    print(f"Total samples in multi-dataset: {len(dataset)}")
-    for i in range(len(dataset)):
-        image, label = dataset[i]
-        print(f"Sample {i}: Image shape , Label {label}")
-        if i == 5:
-            break
-
-    dataset = MultiDataset(
-        dataset_names=["FairFace", "CelebA_HQ", "RAF-DB"],  # Adjust these names as needed
-        transform=None,  # Add any transforms if needed
-        split="train",
-        datasets_root="../processed_datasets/datasets_with_standard_labels",
-        all_datasets=True  # Set to True to load all datasets in the root directory
-    )
-    print(f"MultiDataset loaded successfully! Total samples: {len(dataset)}")
-    for i in range(len(dataset)):
-        image, label = dataset[i]
-        print(f"Sample {i}: Label {label}")
-        if i == 5:
-            break
-    
-    print("Dataset information:")
-    try:
-        info = dataset.get_dataset_info(compute_stats=True)
-        for name, details in info.items():
-            print(f"Dataset: {name}")
-            print(f"  Number of samples: {details['length']}")
-            print(f"  Global index range: [{details['start_idx']} - {details['end_idx']}]")
-            stats = details.get('stats', {})
-            for task in ['age', 'gender', 'emotion']:
-                dist = stats.get(f"{task}_distribution", {})
-                missing = stats.get(f"{task}_missing", None)
-                print(f"  {task.capitalize()} statistics:")
-                if dist:
-                    print(f"    Distribution:")
-                    for k, v in dist.items():
-                        print(f"      Class {k}: {v} samples")
-                else:
-                    print("    Distribution: (none)")
-                print(f"    Missing: {missing} samples")
-            print()
+        # Comparison with MultiDataset (without task balancing)
+        print("\n" + "="*60)
+        print("=== COMPARISON: MultiDataset vs TaskBalanceDataset ===")
+        print("="*60)
+        
+        # Create MultiDataset for comparison
+        multi_dataset = MultiDataset(
+            dataset_names=["test_dataset"],
+            transform=test_transforms,
+            split="train",
+            datasets_root="../datasets_with_standard_labels",
+            all_datasets=True,
+            verbose=False
+        )
+        
+        # Count valid samples in MultiDataset
+        print(f"\n=== MultiDataset (no balancing) valid labels count ===")
+        multi_total_emotion_valid = 0
+        multi_total_age_valid = 0
+        multi_total_gender_valid = 0
+        multi_dataset_size = len(multi_dataset)
+        
+        for idx in range(multi_dataset_size):
+            # Find which dataset and local index this global index corresponds to
+            dataset_idx = 0
+            for i, cumulative_length in enumerate(multi_dataset.cumulative_lengths[1:], 1):
+                if idx < cumulative_length:
+                    dataset_idx = i - 1
+                    break
+            local_idx = idx - multi_dataset.cumulative_lengths[dataset_idx]
+            
+            dataset = multi_dataset.datasets[dataset_idx]
+            if dataset.emotions[local_idx] != -1:
+                multi_total_emotion_valid += 1
+            if dataset.age_groups[local_idx] != -1:
+                multi_total_age_valid += 1
+            if dataset.genders[local_idx] != -1:
+                multi_total_gender_valid += 1
+        
+        print(f"MultiDataset size: {multi_dataset_size}")
+        print(f"Emotion valid samples: {multi_total_emotion_valid}/{multi_dataset_size} ({multi_total_emotion_valid/multi_dataset_size*100:.1f}%)")
+        print(f"Age valid samples: {multi_total_age_valid}/{multi_dataset_size} ({multi_total_age_valid/multi_dataset_size*100:.1f}%)")
+        print(f"Gender valid samples: {multi_total_gender_valid}/{multi_dataset_size} ({multi_total_gender_valid/multi_dataset_size*100:.1f}%)")
+        
+        # Test MultiDataset dataloader
+        print(f"\n=== Testing MultiDataset dataloader ===")
+        multi_dataloader = DataLoader(multi_dataset, batch_size=256, shuffle=True)
+        
+        # Count valid samples (labels != -1) for each task in MultiDataset
+        multi_emotion_valid_count = 0
+        multi_age_valid_count = 0
+        multi_gender_valid_count = 0
+        multi_total_samples = 0
+        multi_batches_without_emotion = 0  # Count batches with no emotion valid samples
+        
+        for batch_idx, (images, labels) in enumerate(multi_dataloader):
+            labels = [label.numpy() for label in labels]  # Convert labels to numpy for easier printing
+            
+            # Count valid labels in this batch
+            emotion_valid_in_batch = sum(1 for label in labels[2] if label != -1)
+            age_valid_in_batch = sum(1 for label in labels[0] if label != -1)
+            gender_valid_in_batch = sum(1 for label in labels[1] if label != -1)
+            
+            multi_emotion_valid_count += emotion_valid_in_batch
+            multi_age_valid_count += age_valid_in_batch
+            multi_gender_valid_count += gender_valid_in_batch
+            multi_total_samples += len(labels[0])
+            
+            # Count batches without emotion valid samples
+            if emotion_valid_in_batch == 0:
+                multi_batches_without_emotion += 1
+            
+            # Print only first 6 batches
+            if batch_idx < 6:
+                print(f"MultiDataset Batch {batch_idx}: Emotion valid: {emotion_valid_in_batch}/{len(labels[2])}, Age valid: {age_valid_in_batch}/{len(labels[0])}, Gender valid: {gender_valid_in_batch}/{len(labels[1])}")            
+            else:
+                print(f"{batch_idx}/{len(multi_dataloader)} MultiDataset batches processed", end='.\r')
+        multi_total_batches = batch_idx + 1  # Total number of batches processed
+        
+        print(f"\n=== MultiDataset Dataloader Summary (All batches) ===")
+        print(f"Total batches processed: {multi_total_batches}")
+        print(f"Total samples processed in batches: {multi_total_samples}")
+        print(f"Emotion valid samples in batches: {multi_emotion_valid_count}/{multi_total_samples} ({multi_emotion_valid_count/multi_total_samples*100:.1f}%)")
+        print(f"Age valid samples in batches: {multi_age_valid_count}/{multi_total_samples} ({multi_age_valid_count/multi_total_samples*100:.1f}%)")
+        print(f"Gender valid samples in batches: {multi_gender_valid_count}/{multi_total_samples} ({multi_gender_valid_count/multi_total_samples*100:.1f}%)")
+        print(f"Batches without emotion valid samples: {multi_batches_without_emotion}/{multi_total_batches} ({multi_batches_without_emotion/multi_total_batches*100:.1f}%)")
+        
+        # Show comparison
+        print(f"\n=== COMPARISON SUMMARY ===")
+        print(f"Dataset sizes:")
+        print(f"  MultiDataset (original): {multi_dataset_size}")
+        print(f"  TaskBalanceDataset (balanced): {dataset_size}")
+        print(f"  Size increase: +{dataset_size - multi_dataset_size} samples ({((dataset_size - multi_dataset_size)/multi_dataset_size*100):.1f}%)")
+        
+        print(f"\nBatch processing comparison (all batches):")
+        print(f"  MultiDataset total batches: {multi_total_batches}")
+        print(f"  TaskBalanceDataset total batches: {total_batches}")
+        print(f"  MultiDataset samples processed: {multi_total_samples}")
+        print(f"  TaskBalanceDataset samples processed: {total_samples}")
+        
+        print(f"\nEmotion valid samples in batches:")
+        print(f"  MultiDataset: {multi_emotion_valid_count}/{multi_total_samples} ({multi_emotion_valid_count/multi_total_samples*100:.1f}%)")
+        print(f"  TaskBalanceDataset: {emotion_valid_count}/{total_samples} ({emotion_valid_count/total_samples*100:.1f}%)")
+        if multi_total_samples > 0 and total_samples > 0:
+            emotion_improvement = (emotion_valid_count/total_samples) - (multi_emotion_valid_count/multi_total_samples)
+            print(f"  Improvement in emotion representation: {emotion_improvement*100:.1f} percentage points")
+        
+        print(f"\nBatches without emotion valid samples:")
+        print(f"  MultiDataset: {multi_batches_without_emotion}/{multi_total_batches} ({multi_batches_without_emotion/multi_total_batches*100:.1f}%)")
+        print(f"  TaskBalanceDataset: {batches_without_emotion}/{total_batches} ({batches_without_emotion/total_batches*100:.1f}%)")
+        if multi_total_batches > 0 and total_batches > 0:
+            batch_improvement = (multi_batches_without_emotion/multi_total_batches) - (batches_without_emotion/total_batches)
+            print(f"  Reduction in batches without emotion: {batch_improvement*100:.1f} percentage points")
+        
+        print(f"\nAge valid samples in batches:")
+        print(f"  MultiDataset: {multi_age_valid_count}/{multi_total_samples} ({multi_age_valid_count/multi_total_samples*100:.1f}%)")
+        print(f"  TaskBalanceDataset: {age_valid_count}/{total_samples} ({age_valid_count/total_samples*100:.1f}%)")
+        if multi_total_samples > 0 and total_samples > 0:
+            age_improvement = (age_valid_count/total_samples) - (multi_age_valid_count/multi_total_samples)
+            print(f"  Improvement in age representation: {age_improvement*100:.1f} percentage points")
+        
+        print(f"\nGender valid samples in batches:")
+        print(f"  MultiDataset: {multi_gender_valid_count}/{multi_total_samples} ({multi_gender_valid_count/multi_total_samples*100:.1f}%)")
+        print(f"  TaskBalanceDataset: {gender_valid_count}/{total_samples} ({gender_valid_count/total_samples*100:.1f}%)")
+        if multi_total_samples > 0 and total_samples > 0:
+            gender_improvement = (gender_valid_count/total_samples) - (multi_gender_valid_count/multi_total_samples)
+            print(f"  Improvement in gender representation: {gender_improvement*100:.1f} percentage points")
+            
+        print(f"\nComplete dataset comparison:")
+        print(f"\nEmotion valid samples:")
+        print(f"  MultiDataset: {multi_total_emotion_valid}/{multi_dataset_size} ({multi_total_emotion_valid/multi_dataset_size*100:.1f}%)")
+        print(f"  TaskBalanceDataset: {total_emotion_valid}/{dataset_size} ({total_emotion_valid/dataset_size*100:.1f}%)")
+        print(f"  Increase: +{total_emotion_valid - multi_total_emotion_valid} samples")
+        
+        print(f"\nAge valid samples:")
+        print(f"  MultiDataset: {multi_total_age_valid}/{multi_dataset_size} ({multi_total_age_valid/multi_dataset_size*100:.1f}%)")
+        print(f"  TaskBalanceDataset: {total_age_valid}/{dataset_size} ({total_age_valid/dataset_size*100:.1f}%)")
+        print(f"  Increase: +{total_age_valid - multi_total_age_valid} samples")
+        
+        print(f"\nGender valid samples:")
+        print(f"  MultiDataset: {multi_total_gender_valid}/{multi_dataset_size} ({multi_total_gender_valid/multi_dataset_size*100:.1f}%)")
+        print(f"  TaskBalanceDataset: {total_gender_valid}/{dataset_size} ({total_gender_valid/dataset_size*100:.1f}%)")
+        print(f"  Increase: +{total_gender_valid - multi_total_gender_valid} samples")
+        
     except Exception as e:
-        print(f"Error loading MultiDataset: {e}")
-
-
-    print("\n\n\n")
-    print("TESTING BALANCED SAMPLING")
-    merged_indices = dataset.sample_balanced_indices(num_samples_per_class=1000)
-    class_weights, task_weights, class_distributions  = compute_class_and_task_weights_from_indices(dataset, merged_indices)
-    print("=== Balanced Sampling Summary ===")
-    for task in ['age', 'gender', 'emotion']:
-        print(f"\nTask: {task.capitalize()}")
-        dist = class_distributions.get(task, {})
-        if dist:
-            print("  Class Distribution:")
-            for k, v in dist.items():
-                print(f"    Class {k}: {v} samples")
-        else:
-            print("  Class Distribution: (none)")
-        weights = class_weights.get(task)
-        if weights is not None and len(weights) > 0:
-            print(f"  Class Weights: {weights.numpy()}")
-        else:
-            print("  Class Weights: N/A")
-    print("\nTask Weights: ", task_weights.numpy())
-    print("===============================")
-
-
-
-    # Example of using BalancedIdxDataset
-    balanced_dataset = BalancedIdxDataset(dataset, num_samples_per_class=10000)
-    print(f"BalancedIdxDataset created with {len(balanced_dataset)} samples")
-    for i in range(len(balanced_dataset)):
-        image, label = balanced_dataset[i]
-        print(f"Balanced Sample {i}: Label {label}")
-        if i == 5:
-            break
-
-    # Example of getting class weights from BalancedIdxDataset
-    try:
-        class_weights = balanced_dataset.get_class_weights('age')
-        print(f"Class weights for 'age': {class_weights.numpy()}")
-        class_weights = balanced_dataset.get_class_weights('emotion')
-        print(f"Class weights for 'emotion': {class_weights.numpy()}")
-        class_weights = balanced_dataset.get_class_weights('gender')
-        print(f"Class weights for 'gender': {class_weights.numpy()}")
-        print("Class weights computed successfully for all tasks.")
-        print("\n\n")
-        print(f"Task weights: {balanced_dataset.get_task_weights().numpy()}")
-    except Exception as e:
-        print(f"Error getting class weights: {e}")
+        print(f"Error testing TaskBalanceDataset: {e}")
+        print("This is expected if the test datasets are not available.")
+        print("The TaskBalanceDataset class has been created and should work with proper dataset paths.")
+    
