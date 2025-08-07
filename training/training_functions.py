@@ -17,10 +17,15 @@ def _specific_task_train_epoch(model, optimizer, dataloader, losses, task_name, 
 
     # Use tqdm if requested, otherwise use regular enumerate
     iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Training") if use_tqdm else enumerate(dataloader)
+    task_idx = 0
+    if task_name == 'gender':
+        task_idx = 1
+    elif task_name == 'emotion':
+        task_idx = 2
 
     for batch_idx, (image, labels) in iterator:
         image = image.to(device)
-        labels = labels[task_name].to(device)
+        labels = labels[task_idx].to(device)
 
         # Forward pass
         if text_features is None:                
@@ -100,10 +105,10 @@ def multitask_epoch_train(model, optimizer, dataloader, losses, task_name, devic
     for batch_idx, (image, labels) in iterator:
         image = image.to(device)
         
-        age_t = labels['age'].to(device)
-        gender_t = labels['gender'].to(device)
-        emotion_t = labels['emotion'].to(device)
-                   
+        age_t = labels[0].to(device)
+        gender_t = labels[1].to(device)
+        emotion_t = labels[2].to(device)
+
         text_features = model.get_text_features(normalize=True)
         with torch.no_grad():
             image_features = model.get_image_features(image, normalize=True)
@@ -339,11 +344,16 @@ def _specific_task_val_epoch(model, dataloader, losses, task_name, device, text_
     all_preds = []
     # Use tqdm if requested, otherwise use regular enumerate
     iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation") if use_tqdm else enumerate(dataloader)
+    task_idx = 0
+    if task_name == 'gender':
+        task_idx = 1
+    elif task_name == 'emotion':
+        task_idx = 2
     
     with torch.no_grad():
         for batch_idx, (image, labels) in iterator:
             image = image.to(device)
-            labels = labels[task_name].to(device)
+            labels = labels[task_idx].to(device)
             # Forward pass
             if text_features is None:                
                 # The only possible case where text_features is None is when we train the softCPT so
@@ -396,10 +406,10 @@ def multitask_epoch_val(model, dataloader, losses, task_name,device, text_featur
         for batch_idx, (image, labels) in iterator:
             image = image.to(device)
             
-            age_t = labels['age'].to(device)
-            gender_t = labels['gender'].to(device)
-            emotion_t = labels['emotion'].to(device)
-                    
+            age_t = labels[0].to(device)
+            gender_t = labels[1].to(device)
+            emotion_t = labels[2].to(device)
+
             text_features = model.get_text_features(normalize=True)
 
             image_features = model.get_image_features(image, normalize=True)

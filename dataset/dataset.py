@@ -102,7 +102,7 @@ class BaseDataset(Dataset):
         # Path to the split folder (train or test)
         self.split_path = os.path.join(root, split)
         
-        # Path to images folder and labels CSV
+        # Path to images folder and labels CSV        
         self.labels_path = os.path.join(self.split_path, "labels.csv")
         
         # Load the CSV file
@@ -139,11 +139,8 @@ class BaseDataset(Dataset):
         
         # Apply transforms if provided
         if self.transform:
-            image = self.transform(image)
-        else:
-            # If no transform is provided, convert to tensor
-            image = tform.ToTensor()(image)
-        
+            image = self.transform(image)        
+
         # Create label array with all attributes (missing values are -1)
         # Age is now returned as age group instead of raw age
         label = [

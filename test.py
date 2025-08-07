@@ -1,4 +1,4 @@
-from dataset.dataset import MultiDataset, BalancedIdxDataset
+from dataset.dataset import MultiDataset
 from torch.utils.data import DataLoader
 from sklearn.metrics import confusion_matrix, accuracy_score
 from wrappers.promptopt.prompt_learner import CustomModel
@@ -100,24 +100,22 @@ def predict(model, dataloader):
             
             # Process entire batch efficiently using vectorized operations
             # Filter valid (non-missing) labels and corresponding predictions
-            
-            if 'age' in labels:
-                age_valid_mask = labels['age'] != -1
-                if age_valid_mask.any():
-                    age_true_labels.extend(labels['age'][age_valid_mask].cpu().numpy())
-                    age_predictions.extend(age_pred_batch[age_valid_mask].numpy())
+                        
+            age_valid_mask = labels[0] != -1
+            if age_valid_mask.any():
+                age_true_labels.extend(labels[0][age_valid_mask].cpu().numpy())
+                age_predictions.extend(age_pred_batch[age_valid_mask].numpy())
                     
-            if 'gender' in labels:
-                gender_valid_mask = labels['gender'] != -1
-                if gender_valid_mask.any():
-                    gender_true_labels.extend(labels['gender'][gender_valid_mask].cpu().numpy())
-                    gender_predictions.extend(gender_pred_batch[gender_valid_mask].numpy())
+            gender_valid_mask = labels[1] != -1
+            if gender_valid_mask.any():
+                gender_true_labels.extend(labels[1][gender_valid_mask].cpu().numpy())
+                gender_predictions.extend(gender_pred_batch[gender_valid_mask].numpy())
                     
-            if 'emotion' in labels:
-                emotion_valid_mask = labels['emotion'] != -1
-                if emotion_valid_mask.any():
-                    emotion_true_labels.extend(labels['emotion'][emotion_valid_mask].cpu().numpy())
-                    emotion_predictions.extend(emotion_pred_batch[emotion_valid_mask].numpy())
+        
+            emotion_valid_mask = labels[2] != -1
+            if emotion_valid_mask.any():
+                emotion_true_labels.extend(labels[2][emotion_valid_mask].cpu().numpy())
+                emotion_predictions.extend(emotion_pred_batch[emotion_valid_mask].numpy())
 
     # Compute confusion matrices only for available predictions
     confusion_age = None

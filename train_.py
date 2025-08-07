@@ -67,51 +67,19 @@ print(f"Total trainable parameter values: {total_trainable_params}")
 
 training_dataset = validation_dataset = None
 
-if hasattr(config, 'NUM_SAMPLES_PER_CLASS'):
-    # Use TaskBalanceDataset for training with task balancing
-    balance_task = getattr(config, 'BALANCE_TASK', None)  # Get balance task from config if available
-    training_dataset = TaskBalanceDataset(
+training_set = training_dataset = TaskBalanceDataset(
         dataset_names=config.DATASET_NAMES, 
         transform=img_transform, 
         split="train", 
         datasets_root=config.DATASET_ROOT, 
-        verbose=True,
-        balance_task=balance_task
-    )
-    
-    # Use validation dataset names if specified, otherwise use training dataset names
-    validation_dataset_names = getattr(config, 'VALIDATION_DATASET_NAMES', config.DATASET_NAMES)
-    if not validation_dataset_names:  # If empty list, use training dataset names
-        validation_dataset_names = config.DATASET_NAMES
-    
-    # Use MultiDataset for validation with test split
-    validation_dataset = MultiDataset(
-        dataset_names=validation_dataset_names, 
-        transform=img_transform, 
-        split="test", 
-        datasets_root=config.DATASET_ROOT, 
+        balance_task=config.BALANCE_TASK,
         verbose=True
     )
-else:
-    # Use TaskBalanceDataset for training (without specific balancing)
-    training_dataset = TaskBalanceDataset(
+
+validation_set = validation_dataset = MultiDataset(
         dataset_names=config.DATASET_NAMES, 
         transform=img_transform, 
-        split="train", 
-        datasets_root=config.DATASET_ROOT, 
-        verbose=True
-    )
-    
-    # Use validation dataset names if specified, otherwise use training dataset names
-    validation_dataset_names = getattr(config, 'VALIDATION_DATASET_NAMES', config.DATASET_NAMES)
-    if not validation_dataset_names:  # If empty list, use training dataset names
-        validation_dataset_names = config.DATASET_NAMES
-    
-    # Use MultiDataset for validation with test split  
-    validation_dataset = MultiDataset(
-        dataset_names=validation_dataset_names, 
-        transforms=img_transform, 
-        split="test", 
+        split="val", 
         datasets_root=config.DATASET_ROOT, 
         verbose=True
     )

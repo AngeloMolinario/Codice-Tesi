@@ -102,7 +102,7 @@ def check_csv(train_csv_path, val_csv_path):
         print(f"An error occurred during the duplicate check: {e}")
 
 
-def split_csv_file(input_csv, output_dir, train_ratio=0.8, random_seed=42):
+def split_csv_file(input_csv, output_dir, train_ratio=0.8, random_seed=42, rename_original_csv=False):
     """
     Esegue uno split stratificato avanzato su un file CSV.
     1. Applica la mappatura dei gruppi di età se la colonna 'Age' è presente.
@@ -113,6 +113,19 @@ def split_csv_file(input_csv, output_dir, train_ratio=0.8, random_seed=42):
     print(f"\n{'='*80}")
     print(f"INTELLIGENT SPLITTING FOR CSV: {os.path.basename(input_csv)}")
     print(f"{'='*80}")
+
+    # --- CHECK PRE-SPLIT ---
+    # Se i file di output e il file 'original.csv' esistono già, si assume che lo split sia stato completato.
+    # Questo previene riesecuzioni accidentali, specialmente quando si usa 'rename_original_csv'.
+    original_csv_in_place = os.path.exists(os.path.join(os.path.dirname(input_csv), 'original.csv'))
+    train_labels_exist = os.path.exists(os.path.join(output_dir, 'train', 'labels.csv'))
+    val_labels_exist = os.path.exists(os.path.join(output_dir, 'val', 'labels.csv'))
+
+    if original_csv_in_place and train_labels_exist and val_labels_exist:
+        print("\nSkipping split: Found 'original.csv', 'train/labels.csv', and 'val/labels.csv'.")
+        print("It appears the dataset has already been split.")
+        print(f"{'='*80}\n")
+        return
 
     random.seed(random_seed)
     np.random.seed(random_seed)
@@ -221,9 +234,29 @@ def split_csv_file(input_csv, output_dir, train_ratio=0.8, random_seed=42):
         os.makedirs(val_dir, exist_ok=True)
 
         # Definisci i percorsi completi dei file di output
-        train_output_path = os.path.join(train_dir, 'train.csv')
-        val_output_path = os.path.join(val_dir, 'validation.csv')
-        
+        train_csv_name = 'train.csv'
+        validation_csv_name = 'validation.csv'
+        if rename_original_csv:
+            try:
+                original_dir = os.path.dirname(input_csv)
+                new_path = os.path.join(original_dir, 'original.csv')
+                
+                if os.path.abspath(input_csv) == os.path.abspath(new_path):
+                    print("\nInfo: Original file is already named 'original.csv'. No need to rename.")
+                elif os.path.exists(new_path):
+                    print(f"\nWarning: Cannot rename. A file named 'original.csv' already exists in the directory.")
+                else:
+                    os.rename(input_csv, new_path)
+                    print(f"\nSuccessfully renamed original file to: {new_path}")
+                train_csv_name = validation_csv_name = 'labels.csv'
+            except Exception as e:
+                print(f"\nError: Could not rename the original CSV file. Reason: {e}")
+
+            
+            
+        train_output_path = os.path.join(train_dir, train_csv_name)
+        val_output_path = os.path.join(val_dir, validation_csv_name)
+
         # Salva i file CSV
         print(f"\nSaving training data to: {train_output_path}")
         train_df.to_csv(train_output_path, index=True, sep=',')
@@ -282,7 +315,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="output_split", help="Directory to save the output CSV files.")
     parser.add_argument("--train_ratio", type=float, default=0.8, help="Proportion of the dataset for the training set (e.g., 0.8 for 80%).")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
-    
+    parser.add_argument("--rename_original_csv", action='store_true', help="Rename the original CSV file to 'original.csv' before splitting.")
     args = parser.parse_args()
     if 'train' in args.input_csv:
         output_dir = args.input_csv.split('train')[0]
@@ -294,5 +327,6 @@ if __name__ == "__main__":
         input_csv=args.input_csv,
         output_dir=output_dir,
         train_ratio=args.train_ratio,
-        random_seed=args.seed
+        random_seed=args.seed,
+        rename_original_csv=args.rename_original_csv
     )
