@@ -127,6 +127,12 @@ def split_csv_file(input_csv, output_dir, train_ratio=0.8, random_seed=42):
         print(f"Error reading CSV file: {e}")
         return
 
+    # Rimuove la colonna dell'indice se è stata salvata per errore nel file di input
+    # per garantire che l'header di output corrisponda a quello di input.
+    if df.columns[0].startswith('Unnamed:'):
+        df = df.iloc[:, 1:]
+        print("Removed unnamed index column to match input header format.")
+
     # Salva una copia della colonna 'Age' originale se esiste e contiene dati
     original_age_col = None
     if 'Age' in df.columns and df['Age'].notna().any():
@@ -148,7 +154,18 @@ def split_csv_file(input_csv, output_dir, train_ratio=0.8, random_seed=42):
         print(f"Error: CSV must have at least two columns (a path and at least one label).")
         return
     
-    label_columns = df.columns.tolist()[1:]
+    # Trova l'indice della colonna del percorso (case-insensitive) e seleziona le colonne successive
+    cols = df.columns.tolist()
+    path_col_name = 'Path' # Assumiamo che la colonna si chiami 'Path'
+    try:
+        # Cerca il nome della colonna in modo case-insensitive
+        path_col_name_found = next(c for c in cols if c.lower() == path_col_name.lower())
+        path_col_index = cols.index(path_col_name_found)
+        label_columns = cols[path_col_index + 1:]
+    except StopIteration:
+        print(f"Warning: Column '{path_col_name}' not found. Defaulting to use all columns after the first one for labels.")
+        label_columns = df.columns.tolist()[1:]
+
     print(f"\nUsing the following columns for stratification: {label_columns}")
 
     # Step 1: Stratificazione per combinazioni
@@ -209,10 +226,10 @@ def split_csv_file(input_csv, output_dir, train_ratio=0.8, random_seed=42):
         
         # Salva i file CSV
         print(f"\nSaving training data to: {train_output_path}")
-        train_df.to_csv(train_output_path, index=False, sep=',')
+        train_df.to_csv(train_output_path, index=True, sep=',')
         
         print(f"Saving validation data to: {val_output_path}")
-        val_df.to_csv(val_output_path, index=False, sep=',')
+        val_df.to_csv(val_output_path, index=True, sep=',')
 
         print("\n--- Preview of Saved Training Data (first 5 rows) ---")
         print(train_df.head().to_string())
