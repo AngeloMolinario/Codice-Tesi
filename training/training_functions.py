@@ -78,7 +78,9 @@ def _specific_task_train_epoch(model, optimizer, dataloader, losses, task_name, 
     
 def multitask_epoch_train(model, optimizer, dataloader, losses, task_name, device, text_features=None, use_tqdm=False, num_classes=None, alpha=0.99, running_means_file="running_means.json"):
     model.train()
-    task_weights = dataloader.dataset.get_task_weights().to(device)
+    
+    task_weights = [1.0,1.0,1.0]#dataloader.dataset.get_task_weights().to(device)
+
     # Definisci il numero di classi per ogni task se non fornito
     if num_classes is None:
         num_classes = {'age': 9, 'gender': 2, 'emotion': 7}  # Valori di default
@@ -386,7 +388,7 @@ def _specific_task_val_epoch(model, dataloader, losses, task_name, device, text_
 
 def multitask_epoch_val(model, dataloader, losses, task_name,device, text_features=None, use_tqdm=False, num_classes=None):
     model.eval()  # Changed from model.train() to model.eval()
-    task_weights = dataloader.dataset.get_task_weights().to(device)
+    task_weights = [1.0, 0.1, 1.0]  #dataloader.dataset.get_task_weights().to(device)
     # Definisci il numero di classi per ogni task se non fornito
     if num_classes is None:
         num_classes = {'age': 9, 'gender': 2, 'emotion': 7}  # Valori di default

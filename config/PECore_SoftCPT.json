@@ -1,12 +1,12 @@
 {
-    "USE_TQDM": true,
+    "USE_TQDM": false,
     "BATCH_SIZE": 128,
     "NUM_WORKERS": 4,
     "EPOCHS": 10,
     "LR": 0.001,
     "TASK": "multitask",
     "MODEL_TYPE": "softCPT",
-    "NUM_TEXT_PROMPTS": 16,
+    "NUM_TEXT_PROMPTS": 20,
     "TASK_NAMES": ["age-group estimation", "gender classification", "emotion recognition"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
@@ -14,11 +14,11 @@
         ["surprise", "fear", "disgust", "happy", "sad", "angry", "neutral"]
     ],
     "PROMPT_GEN_TYPE": "lin",
-    "DATASET_NAMES": ["CelebA_HQ", "FairFace", "LFW", "MiviaGender", "RAF-DB", "TestDataset", "UTKFace"],
+    "DATASET_NAMES": [],
     "BALANCE_TASK": {"emotion": 0.25},
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "SEED": 2025,   
-    "OUTPUT_DIR": "../TRAINING_OUTPUT/SoftBalanced_16_task_balancing_mse/",
+    "OUTPUT_DIR": "../TRAINING_SOFTCPT/20_full_augmented",
     "NAMED_TRAINABLE_PARAMETERS": [
         "prompt_learner",
         "task_prompt_learner", 
