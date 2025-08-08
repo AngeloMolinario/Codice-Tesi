@@ -1,360 +1,119 @@
-import matplotlib.pyplot as plt
-import seaborn as sns
-import numpy as np
-from sklearn.metrics import confusion_matrix
 import os
+import json
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
-class TrainingMetrics:
-    """
-    A class to track and plot training and validation metrics.
-    """
-    def __init__(self, class_names, output_dir='results', is_multitask=False, task_names=None):
-        """
-        Initializes the TrainingMetrics tracker.
-
-        Args:
-            class_names (list): A list of strings representing the class names for the confusion matrix.
-                              For multitask: list of lists, where each sublist contains class names for each task.
-                              For single task: simple list of strings.
-            output_dir (str): The directory where plots will be saved.
-            is_multitask (bool): Whether this is for multitask learning.
-            task_names (list): Names of the tasks (e.g., ['age', 'gender', 'emotion']) for multitask.
-        """
-        self.class_names = class_names
+class MultitaskTracker:
+    def __init__(self, num_tasks, output_dir, task_names, class_names):
+        self.num_tasks = num_tasks
         self.output_dir = output_dir
-        self.is_multitask = is_multitask
-        self.task_names = task_names if task_names else []
-        
-        if is_multitask:
-            # For multitask: track metrics for each task + overall
-            num_tasks = len(task_names) + 1  # +1 for overall
-            self.train_losses = [[] for _ in range(num_tasks)]
-            self.train_accuracies = [[] for _ in range(num_tasks)]
-            self.val_losses = [[] for _ in range(num_tasks)]
-            self.val_accuracies = [[] for _ in range(num_tasks)]
-            
-            # For confusion matrices
-            self.all_preds = [[] for _ in range(len(task_names))]
-            self.all_labels = [[] for _ in range(len(task_names))]
+        self.task_names = task_names
+        self.class_names = class_names
+
+        self.loss = {'train': [[] for _ in range(num_tasks)], 'val': [[] for _ in range(num_tasks)], 'multitask': {'train': [], 'val': []}}
+        self.accuracy = {'train': [[] for _ in range(num_tasks)], 'val': [[] for _ in range(num_tasks)], 'mean': {'train': [], 'val': []}}
+        self.confusion_data = {'val': [[] for _ in range(num_tasks)]}  # Per ogni task, lista di tuple (pred, label) per ogni epoca
+
+        os.makedirs(os.path.join(output_dir, "cm"), exist_ok=True)
+        os.makedirs(os.path.join(output_dir, "plot"), exist_ok=True)
+
+    def update_loss(self, task_idx, value, train=True, multitask=False):
+        key = 'train' if train else 'val'
+        if multitask:
+            self.loss['multitask'][key].append(value)
         else:
-            # For single task: simple lists
-            self.train_losses = []
-            self.train_accuracies = []
-            self.val_losses = []
-            self.val_accuracies = []
-            self.all_preds = []
-            self.all_labels = []
+            self.loss[key][task_idx].append(value)
 
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
-
-    def update_train_metrics(self, loss, accuracy):
-        """Adds new training loss and accuracy to the tracker."""
-        if self.is_multitask and isinstance(loss, (list, np.ndarray)):
-            # Store metrics for each task
-            for i, (task_loss, task_acc) in enumerate(zip(loss, accuracy)):
-                self.train_losses[i].append(task_loss)
-                self.train_accuracies[i].append(task_acc)
+    def update_accuracy(self, task_idx, value, train=True, mean=False):
+        key = 'train' if train else 'val'
+        if mean:
+            self.accuracy['mean'][key].append(value)
         else:
-            # Single task behavior
-            if isinstance(loss, (list, np.ndarray)):
-                self.train_losses.append(loss[0])
-                self.train_accuracies.append(accuracy[0])
-            else:
-                self.train_losses.append(loss)
-                self.train_accuracies.append(accuracy)
+            self.accuracy[key][task_idx].append(value)
 
-    def update_val_metrics(self, loss, accuracy):
-        """Adds new validation loss and accuracy to the tracker."""
-        if self.is_multitask and isinstance(loss, (list, np.ndarray)):
-            # Store metrics for each task
-            for i, (task_loss, task_acc) in enumerate(zip(loss, accuracy)):
-                self.val_losses[i].append(task_loss)
-                self.val_accuracies[i].append(task_acc)
-        else:
-            # Single task behavior
-            if isinstance(loss, (list, np.ndarray)):
-                self.val_losses.append(loss[0])
-                self.val_accuracies.append(accuracy[0])
-            else:
-                self.val_losses.append(loss)
-                self.val_accuracies.append(accuracy)
+    def update_confusion(self, task_idx, preds, labels, epoch):
+        # preds, labels: torch.Tensor or np.ndarray
+        preds = preds.cpu().numpy() if torch.is_tensor(preds) else np.array(preds)
+        labels = labels.cpu().numpy() if torch.is_tensor(labels) else np.array(labels)
+        while len(self.confusion_data['val'][task_idx]) <= epoch:
+            self.confusion_data['val'][task_idx].append(([], []))
+        self.confusion_data['val'][task_idx][epoch] = (preds, labels)
 
-    def update_predictions(self, preds, labels, task_idx=None):
-        """
-        Collects predictions and labels for the confusion matrix.
-        
-        Args:
-            preds: Predictions tensor or list of tensors (for multitask).
-            labels: Labels tensor or list of tensors (for multitask).
-            task_idx: Index of the task (for multitask). If None, assumes single task.
-        """
-        if self.is_multitask:
-            if task_idx is None:
-                raise ValueError("task_idx must be provided for multitask learning")
-            
-            # Filter out invalid labels (-1) for multitask
-            preds_np = preds.cpu().numpy()
-            labels_np = labels.cpu().numpy()
-            valid_mask = labels_np != -1
-            
-            if valid_mask.sum() > 0:
-                self.all_preds[task_idx].extend(preds_np[valid_mask])
-                self.all_labels[task_idx].extend(labels_np[valid_mask])
-        else:
-            # Single task behavior
-            self.all_preds.extend(preds.cpu().numpy())
-            self.all_labels.extend(labels.cpu().numpy())
+    def save(self, path=None):
+        # Save all metrics and confusion data
+        save_path = path or os.path.join(self.output_dir, "multitask_tracker_history.json")
+        data = {
+            'loss': self.loss,
+            'accuracy': self.accuracy,
+            'confusion_data': {k: [[(p.tolist(), l.tolist()) for (p, l) in v] for v in self.confusion_data[k]] for k in self.confusion_data},
+            'task_names': self.task_names,
+            'class_names': self.class_names
+        }
+        with open(save_path, 'w') as f:
+            json.dump(data, f)
 
-    def reset_predictions(self, task_idx=None):
-        """
-        Resets the collected predictions and labels.
-        
-        Args:
-            task_idx: Index of the task to reset (for multitask). If None, resets all.
-        """
-        if self.is_multitask:
-            if task_idx is None:
-                # Reset all tasks
-                for i in range(len(self.task_names)):
-                    self.all_preds[i] = []
-                    self.all_labels[i] = []
-            else:
-                self.all_preds[task_idx] = []
-                self.all_labels[task_idx] = []
-        else:
-            self.all_preds = []
-            self.all_labels = []
+    @classmethod
+    def load(cls, path):
+        with open(path, 'r') as f:
+            data = json.load(f)
+        tracker = cls(
+            num_tasks=len(data['task_names']),
+            output_dir=os.path.dirname(path),
+            task_names=data['task_names'],
+            class_names=data['class_names']
+        )
+        tracker.loss = data['loss']
+        tracker.accuracy = data['accuracy']
+        # Convert confusion_data back to numpy arrays
+        for k in data['confusion_data']:
+            tracker.confusion_data[k] = []
+            for task_list in data['confusion_data'][k]:
+                tracker.confusion_data[k].append([(np.array(p), np.array(l)) for (p, l) in task_list])
+        return tracker
 
-    def plot_metrics(self):
-        """Plots and saves the training/validation loss and accuracy curves."""
-        if self.is_multitask:
-            self._plot_multitask_metrics()
-        else:
-            self._plot_single_task_metrics()
-
-    def _plot_single_task_metrics(self):
-        """Plot metrics for single task."""
-        epochs = range(1, len(self.train_losses) + 1)
-        plt.figure(figsize=(15, 5))
-
-        plt.subplot(1, 2, 1)
-        plt.plot(epochs, self.train_losses, 'b-o', label='Training Loss')
-        plt.plot(epochs, self.val_losses, 'r-o', label='Validation Loss')
-        plt.title('Training and Validation Loss')
-        plt.xlabel('Epochs')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.grid(True)
-
-        plt.subplot(1, 2, 2)
-        plt.plot(epochs, self.train_accuracies, 'b-o', label='Training Accuracy')
-        plt.plot(epochs, self.val_accuracies, 'r-o', label='Validation Accuracy')
-        plt.title('Training and Validation Accuracy')
-        plt.xlabel('Epochs')
-        plt.ylabel('Accuracy')
-        plt.legend()
-        plt.grid(True)
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, 'training_plots.png'))
-        plt.close()
-
-    def _plot_multitask_metrics(self):
-        """Plot metrics for multitask learning with separate plots for each task."""
-        # Define task labels: 0=all, 1=age, 2=gender, 3=emotion
-        task_labels = ['all'] + self.task_names
-        colors = ['b', 'g', 'r', 'orange', 'purple']  # Fixed: use single letter color codes
-        
-        # Check if we have data for all tasks
-        max_epochs = max(len(task_losses) for task_losses in self.train_losses if task_losses)
-        if max_epochs == 0:
-            print("No training data to plot.")
-            return
-            
-        epochs = range(1, max_epochs + 1)
-        
-        # Create loss plots
-        plt.figure(figsize=(20, 10))
-        
-        # Loss plot
-        plt.subplot(2, 2, 1)
-        for i, (train_losses, val_losses) in enumerate(zip(self.train_losses, self.val_losses)):
-            if train_losses and val_losses:  # Only plot if we have data
-                task_epochs = range(1, len(train_losses) + 1)
-                color = colors[i % len(colors)]
-                plt.plot(task_epochs, train_losses, color=color, marker='o', linestyle='-',
-                        label=f'Training {task_labels[i]}', linewidth=2, markersize=4)
-                plt.plot(task_epochs, val_losses, color=color, marker='s', linestyle='--',
-                        label=f'Validation {task_labels[i]}', linewidth=2, markersize=4)
-        
-        plt.title('Training and Validation Loss - All Tasks')
-        plt.xlabel('Epochs')
-        plt.ylabel('Loss')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.grid(True)
-        
-        # Accuracy plot
-        plt.subplot(2, 2, 2)
-        for i, (train_accs, val_accs) in enumerate(zip(self.train_accuracies, self.val_accuracies)):
-            if train_accs and val_accs:  # Only plot if we have data
-                task_epochs = range(1, len(train_accs) + 1)
-                color = colors[i % len(colors)]
-                plt.plot(task_epochs, train_accs, color=color, marker='o', linestyle='-',
-                        label=f'Training {task_labels[i]}', linewidth=2, markersize=4)
-                plt.plot(task_epochs, val_accs, color=color, marker='s', linestyle='--',
-                        label=f'Validation {task_labels[i]}', linewidth=2, markersize=4)
-        
-        plt.title('Training and Validation Accuracy - All Tasks')
-        plt.xlabel('Epochs')
-        plt.ylabel('Accuracy')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.grid(True)
-        
-        # Individual task plots (only first 2 tasks for space)
-        for task_idx in range(min(2, len(self.task_names))):
-            if (task_idx + 1 < len(self.train_losses) and 
-                self.train_losses[task_idx + 1] and self.val_losses[task_idx + 1]):
-                
-                plt.subplot(2, 2, 3 + task_idx)
-                
-                task_train_losses = self.train_losses[task_idx + 1]  # +1 because 0 is 'all'
-                task_val_losses = self.val_losses[task_idx + 1]
-                task_train_accs = self.train_accuracies[task_idx + 1]
-                task_val_accs = self.val_accuracies[task_idx + 1]
-                
-                task_epochs = range(1, len(task_train_losses) + 1)
-                
-                # Plot loss
-                ax1 = plt.gca()
-                color1 = 'tab:red'
-                ax1.set_xlabel('Epochs')
-                ax1.set_ylabel('Loss', color=color1)
-                ax1.plot(task_epochs, task_train_losses, color=color1, marker='o', linestyle='-',
-                        label=f'Training Loss {task_labels[task_idx + 1]}', linewidth=2)
-                ax1.plot(task_epochs, task_val_losses, color=color1, marker='s', linestyle='--',
-                        label=f'Validation Loss {task_labels[task_idx + 1]}', linewidth=2)
-                ax1.tick_params(axis='y', labelcolor=color1)
-                ax1.grid(True)
-                
-                # Plot accuracy on second y-axis
-                ax2 = ax1.twinx()
-                color2 = 'tab:blue'
-                ax2.set_ylabel('Accuracy', color=color2)
-                ax2.plot(task_epochs, task_train_accs, color=color2, marker='o', linestyle='-',
-                        label=f'Training Acc {task_labels[task_idx + 1]}', linewidth=2)
-                ax2.plot(task_epochs, task_val_accs, color=color2, marker='s', linestyle='--',
-                        label=f'Validation Acc {task_labels[task_idx + 1]}', linewidth=2)
-                ax2.tick_params(axis='y', labelcolor=color2)
-                
-                plt.title(f'{task_labels[task_idx + 1].capitalize()} Task Metrics')
-                
-                # Combine legends
-                lines1, labels1 = ax1.get_legend_handles_labels()
-                lines2, labels2 = ax2.get_legend_handles_labels()
-                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, 'training_plots_multitask.png'), 
-                   bbox_inches='tight', dpi=300)
-        plt.close()
-        
-        # Create separate detailed plots for each task
-        self._plot_individual_task_details()
-
-    def _plot_individual_task_details(self):
-        """Create separate detailed plots for each task."""
-        task_labels = ['all'] + self.task_names
-        
-        for i, task_label in enumerate(task_labels):
-            if (i < len(self.train_losses) and 
-                self.train_losses[i] and self.val_losses[i]):
-                
-                train_losses = self.train_losses[i]
-                val_losses = self.val_losses[i]
-                train_accs = self.train_accuracies[i]
-                val_accs = self.val_accuracies[i]
-                
-                epochs = range(1, len(train_losses) + 1)
-                
-                plt.figure(figsize=(15, 5))
-                
-                # Loss plot
-                plt.subplot(1, 2, 1)
-                plt.plot(epochs, train_losses, 'b-o', 
-                        label=f'Training {task_label}', linewidth=2, markersize=6)
-                plt.plot(epochs, val_losses, 'r-o', 
-                        label=f'Validation {task_label}', linewidth=2, markersize=6)
-                plt.title(f'Loss - Task {i}: {task_label.capitalize()}')
-                plt.xlabel('Epochs')
-                plt.ylabel('Loss')
-                plt.legend()
-                plt.grid(True)
-                
-                # Accuracy plot
-                plt.subplot(1, 2, 2)
-                plt.plot(epochs, train_accs, 'b-o', 
-                        label=f'Training {task_label}', linewidth=2, markersize=6)
-                plt.plot(epochs, val_accs, 'r-o', 
-                        label=f'Validation {task_label}', linewidth=2, markersize=6)
-                plt.title(f'Accuracy - Task {i}: {task_label.capitalize()}')
-                plt.xlabel('Epochs')
-                plt.ylabel('Accuracy')
-                plt.legend()
-                plt.grid(True)
-                
+    def save_confusion_matrices(self, epoch):
+        cm_dir = os.path.join(self.output_dir, "cm")
+        for task_idx, task_name in enumerate(self.task_names):
+            if len(self.confusion_data['val'][task_idx]) > epoch:
+                preds, labels = self.confusion_data['val'][task_idx][epoch]
+                if len(preds) == 0 or len(labels) == 0:
+                    continue
+                cm = confusion_matrix(labels, preds, labels=range(len(self.class_names[task_idx])))
+                disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=self.class_names[task_idx])
+                fig, ax = plt.subplots(figsize=(6, 6))
+                disp.plot(ax=ax, cmap='Blues', xticks_rotation=45)
+                plt.title(f"Confusion Matrix - {task_name} - Epoch {epoch+1}")
                 plt.tight_layout()
-                plt.savefig(os.path.join(self.output_dir, f'task_{i}_{task_label}_metrics.png'), 
-                           dpi=300)
-                plt.close()
+                plt.savefig(os.path.join(cm_dir, f"{task_name}_epoch{epoch+1}.png"))
+                plt.close(fig)
 
-    def plot_confusion_matrix(self, epoch='final', task_idx=None):
-        """
-        Plots and saves the confusion matrix.
-        
-        Args:
-            epoch: Epoch identifier for the filename.
-            task_idx: Index of the task to plot (for multitask). If None, plots all tasks.
-        """
-        if self.is_multitask:
-            if task_idx is None:
-                # Plot confusion matrix for all tasks
-                for i, task_name in enumerate(self.task_names):
-                    self._plot_single_confusion_matrix(i, task_name, epoch)
-            else:
-                # Plot confusion matrix for specific task
-                if task_idx < len(self.task_names):
-                    self._plot_single_confusion_matrix(task_idx, self.task_names[task_idx], epoch)
-        else:
-            # Single task behavior
-            if not self.all_labels or not self.all_preds:
-                print("No predictions to plot confusion matrix.")
-                return
-                
-            cm = confusion_matrix(self.all_labels, self.all_preds)
-            plt.figure(figsize=(12, 10))
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                        xticklabels=self.class_names, yticklabels=self.class_names)
-            plt.title(f'Confusion Matrix - Epoch {epoch}')
-            plt.ylabel('Actual')
-            plt.xlabel('Predicted')
-            plt.savefig(os.path.join(self.output_dir, f'confusion_matrix_epoch_{epoch}.png'))
-            plt.close()
-    
-    def _plot_single_confusion_matrix(self, task_idx, task_name, epoch):
-        """Helper method to plot confusion matrix for a single task."""
-        if not self.all_labels[task_idx] or not self.all_preds[task_idx]:
-            print(f"No predictions to plot confusion matrix for task {task_name}.")
-            return
-            
-        cm = confusion_matrix(self.all_labels[task_idx], self.all_preds[task_idx])
-        plt.figure(figsize=(12, 10))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                    xticklabels=self.class_names[task_idx], 
-                    yticklabels=self.class_names[task_idx])
-        plt.title(f'Confusion Matrix - {task_name.capitalize()} - Epoch {epoch}')
-        plt.ylabel('Actual')
-        plt.xlabel('Predicted')
-        plt.savefig(os.path.join(self.output_dir, f'{task_name}_confusion_matrix_epoch_{epoch}.png'))
+    def plot_losses(self):
+        plot_dir = os.path.join(self.output_dir, "plot")
+        epochs = range(1, len(self.loss['train'][0]) + 1)
+        # All tasks in one plot
+        plt.figure(figsize=(10, 6))
+        for i, task_name in enumerate(self.task_names):
+            plt.plot(epochs, self.loss['train'][i], label=f"{task_name} Train")
+            plt.plot(epochs, self.loss['val'][i], '--', label=f"{task_name} Val")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Loss per Task")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(plot_dir, "all_tasks_loss.png"))
         plt.close()
+
+        # Separate plots
+        for i, task_name in enumerate(self.task_names):
+            plt.figure()
+            plt.plot(epochs, self.loss['train'][i], label="Train")
+            plt.plot(epochs, self.loss['val'][i], label="Val")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.title(f"Loss - {task_name}")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(plot_dir, f"{task_name}_loss.png"))
+            plt.close()

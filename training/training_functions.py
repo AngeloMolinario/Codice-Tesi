@@ -8,514 +8,294 @@ from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
 from .loss import *
 from core.vision_encoder import transforms
+from utils.running_mean import RunningMeans
+class PrefetchLoader:
+    """
+    Wrap a DataLoader to asynchronously prefetch batches to the GPU using a
+    separate CUDA stream. If the provided device is not CUDA, it simply yields
+    from the original loader.
+    """
 
-def _specific_task_train_epoch(model, optimizer, dataloader, losses, task_name, device, text_features=None, use_tqdm=False):
-    model.train()
-    epoch_loss = torch.tensor(0.0, device=device)
-    total_correct = torch.tensor(0, device=device)
-    total_samples = torch.tensor(0, device=device)
+    def __init__(self, loader, device):
+        self.loader = loader
+        self.device = device
 
-    # Use tqdm if requested, otherwise use regular enumerate
-    iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Training") if use_tqdm else enumerate(dataloader)
-    task_idx = 0
-    if task_name == 'gender':
-        task_idx = 1
-    elif task_name == 'emotion':
-        task_idx = 2
+    def __iter__(self):
+        if self.device is None or self.device.type != "cuda":
+            yield from self.loader
+            return
 
-    for batch_idx, (image, labels) in iterator:
-        image = image.to(device)
-        labels = labels[task_idx].to(device)
+        stream = torch.cuda.Stream()
+        first = True
+        for data in self.loader:
+            with torch.cuda.stream(stream):
+                images, labels = data
+                images = images.to(self.device, non_blocking=True)
 
-        # Forward pass
-        if text_features is None:                
-            # The only possible case where text_features is None is when we train the softCPT so
-            # the get_text_features method don't need the text parameters as the text features
-            # are dinamically generated from the init task names and classes names.
-            text_features = model.get_text_features(normalize=True)
-    
-        image_features = model.get_image_features(image, normalize=True)
+                if isinstance(labels, dict):
+                    labels = {k: v.to(self.device, non_blocking=True) for k, v in labels.items()}
+                elif isinstance(labels, (list, tuple)):
+                    labels = [l.to(self.device, non_blocking=True) for l in labels]
+                else:
+                    labels = labels.to(self.device, non_blocking=True)
 
-        logits = model.logit_scale.exp() * (image_features @ text_features.t())        
+            if not first:
+                yield next_images, next_labels
+            else:
+                first = False
 
-        loss, predicted = losses(logits, labels, return_predicted_label=True)
+            torch.cuda.current_stream().wait_stream(stream)
+            next_images = images
+            next_labels = labels
 
-        # Backward pass and optimization
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        yield next_images, next_labels
 
-        # Update epoch metrics - mantieni tutto su GPU
-        epoch_loss += loss.detach()
-        
-        # Update accuracy only for valid samples (!= -1)
-        valid_mask = (labels != -1)
-        if valid_mask.sum() > 0:
-            total_correct += (predicted[valid_mask] == labels[valid_mask]).sum()
-            total_samples += valid_mask.sum()
-        
-        # Print progress only if not using tqdm
-        if not use_tqdm:
-            if batch_idx % 250 == 0:
-                print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
+    def __len__(self):
+        return len(self.loader)
 
-    # Trasferimento su CPU solo alla fine per il calcolo finale
-    num_batches = len(dataloader)
-    
-    # Per compatibilità con multitask, restituisci array di lunghezza 4
-    # [overall/single_task, unused, unused, unused] per loss
-    # [overall, unused, unused, unused] per accuracy
-    losses_array = torch.zeros(4)
-    losses_array[0] = (epoch_loss / num_batches).cpu()
-    
-    accuracies_array = torch.zeros(4)
-    if total_samples > 0:
-        accuracies_array[0] = (total_correct / total_samples).cpu()
-    else:
-        accuracies_array[0] = 0.0
-    
-    return losses_array.numpy(), accuracies_array.numpy()
-    
-def multitask_epoch_train(model, optimizer, dataloader, losses, task_name, device, text_features=None, use_tqdm=False, num_classes=None, alpha=0.99, running_means_file="running_means.json"):
-    model.train()
-    
-    task_weights = [1.0,1.0,1.0]#dataloader.dataset.get_task_weights().to(device)
 
-    # Definisci il numero di classi per ogni task se non fornito
+##############################################################################################
+####            TRAINING AND VALIDATION FOR SINGLE AND MULTITASK                          ####
+##############################################################################################
+import torch
+from tqdm import tqdm
+
+# ==========================
+# MULTITASK TRAIN/VAL EPOCH
+# ==========================
+def run_epoch_multitask(model, dataloader, losses, device, mode="train",
+                        num_classes=None,            # es. [9, 2, 7]
+                        text_features=None,          # tensor [sum(num_classes), D], già sul device
+                        optimizer=None,
+                        running_means=None,          # RunningMeans | None
+                        task_weights=None,           # lista pesi per task; default [1]*T
+                        use_tqdm=False,
+                        return_preds=False,
+                        use_prefetch=True):
+    """
+    Esegue un'epoca di training/validation in modalità MULTITASK.
+
+    Parametri:
+      - losses: lista di loss callable per task, ciascuna deve restituire (loss, pred) con return_predicted_label=True
+      - num_classes: lista num classi per task, ordine coerente con losses e colonne di labels
+      - text_features: embedding testuali già concatenati nell'ordine dei task (shape [sum(num_classes), D])
+      - running_means: se fornito, usa EMA per scalare le loss (update SOLO in train). Se None, nessuno scaling
+      - task_weights: pesi per combinare le loss scalate in total_loss
+      - dataloader deve restituire (images, labels) con labels di shape (B, T), -1 = missing
+    Ritorna:
+      - losses_array: [T+1] -> [total_scaled, raw_task0, raw_task1, ...]
+      - accuracies_array: [T+1] -> [overall_on_valids, acc_task0, acc_task1, ...]
+      - (opzionale) all_preds, all_labels per task
+    """
+    is_train = (mode == "train")
+    model.train() if is_train else model.eval()
+
     if num_classes is None:
-        num_classes = {'age': 9, 'gender': 2, 'emotion': 7}  # Valori di default
-    
-    # Load running means from file or initialize with default values
-    import json
-    if os.path.exists(running_means_file):
+        num_classes = [9, 2, 7]
+    T = len(num_classes)
+
+    if task_weights is None:
+        task_weights = [1.0] * T
+
+    # opzionale prefetch su GPU
+    loader = dataloader
+    if use_prefetch and device is not None and getattr(device, "type", None) == 'cuda':
         try:
-            with open(running_means_file, 'r') as f:
-                running_means = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            running_means = {'age': 1.0, 'gender': 1.0, 'emotion': 1.0}
-    else:
-        running_means = {'age': 1.0, 'gender': 1.0, 'emotion': 1.0}
-    
-    # Array per le metriche: [multitask/overall, age, gender, emotion]
-    task_losses = torch.zeros(4, device=device)  # [multitask, age, gender, emotion]
-    task_correct = torch.zeros(4, device=device)  # [overall, age, gender, emotion]
-    task_samples = torch.zeros(4, device=device)  # [overall, age, gender, emotion]
+            loader = PrefetchLoader(dataloader, device)
+        except NameError:
+            # se PrefetchLoader non esiste, si usa dataloader direttamente
+            loader = dataloader
 
-    # Use tqdm if requested, otherwise use regular enumerate
-    iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Training") if use_tqdm else enumerate(dataloader)
+    # metriche (0 = total scaled; 1..T = raw per task)
+    task_losses = torch.zeros(T + 1, device=device)
+    task_correct = torch.zeros(T + 1, device=device)
+    task_samples = torch.zeros(T + 1, device=device)
 
-    for batch_idx, (image, labels) in iterator:
-        image = image.to(device)
-        
-        age_t = labels[0].to(device)
-        gender_t = labels[1].to(device)
-        emotion_t = labels[2].to(device)
+    if return_preds:
+        all_labels = [[] for _ in range(T)]
+        all_preds  = [[] for _ in range(T)]
 
-        text_features = model.get_text_features(normalize=True)
-        with torch.no_grad():
-            image_features = model.get_image_features(image, normalize=True)
+    iterator = tqdm(loader, desc=f"{mode.capitalize()}") if use_tqdm else loader
 
-        # Calcola i logits per tutti i task in una volta
-        all_logits = model.logit_scale.exp() * (image_features @ text_features.t())        
-        # Dividi i logits per ogni task basandosi sul numero di classi
-        start_idx = 0
-        
-        # Age logits: primi num_classes['age'] logits
-        age_end_idx = start_idx + num_classes['age']
-        age_logits = all_logits[:, start_idx:age_end_idx]
-        start_idx = age_end_idx
-        
-        # Gender logits: successivi num_classes['gender'] logits
-        gender_end_idx = start_idx + num_classes['gender']
-        gender_logits = all_logits[:, start_idx:gender_end_idx]
-        start_idx = gender_end_idx
-        
-        # Emotion logits: rimanenti num_classes['emotion'] logits
-        emotion_end_idx = start_idx + num_classes['emotion']
-        emotion_logits = all_logits[:, start_idx:emotion_end_idx]
+    with torch.set_grad_enabled(is_train):
+        for images, labels in iterator:
+            images = images.to(device, non_blocking=True)  # (B, C, H, W)
+            labels = labels.to(device, non_blocking=True)  # (B, T)
 
-        age_loss, age_predicted = losses[0](age_logits, age_t, return_predicted_label=True)
-        gender_loss, gender_predicted = losses[1](gender_logits, gender_t, return_predicted_label=True)
-        emotion_loss, emotion_predicted = losses[2](emotion_logits, emotion_t, return_predicted_label=True)
-
-        # === Update running means ===
-        running_means['age'] = alpha * running_means['age'] + (1 - alpha) * age_loss.item()
-        running_means['gender'] = alpha * running_means['gender'] + (1 - alpha) * gender_loss.item()
-        running_means['emotion'] = alpha * running_means['emotion'] + (1 - alpha) * emotion_loss.item()
-
-        # === Normalize losses ===
-        age_loss_scaled = age_loss / (running_means['age'] + 1e-8)
-        gender_loss_scaled = gender_loss / (running_means['gender'] + 1e-8)
-        emotion_loss_scaled = emotion_loss / (running_means['emotion'] + 1e-8)
-
-        # === Weighted loss ===
-        loss = (task_weights[0] * age_loss_scaled +
-                task_weights[1] * gender_loss_scaled +
-                task_weights[2] * emotion_loss_scaled)
-
-        # Backward pass and optimization
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # Update losses: [multitask, age, gender, emotion]
-        task_losses[0] += loss.detach()  # multitask loss (scaled)
-        task_losses[1] += age_loss.detach()  # age loss (original)
-        task_losses[2] += gender_loss.detach()  # gender loss (original)
-        task_losses[3] += emotion_loss.detach()  # emotion loss (original)
-        
-        # Update accuracies per task (solo per campioni validi, != -1)
-        age_valid_mask = (age_t != -1)
-        gender_valid_mask = (gender_t != -1)
-        emotion_valid_mask = (emotion_t != -1)
-        
-        if age_valid_mask.sum() > 0:
-            age_correct = (age_predicted[age_valid_mask] == age_t[age_valid_mask]).sum()
-            task_correct[1] += age_correct  # age accuracy
-            task_samples[1] += age_valid_mask.sum()
+            # Image features per batch (puoi togliere no_grad se stai facendo VPT/LoRA visive)
             
-        if gender_valid_mask.sum() > 0:
-            gender_correct = (gender_predicted[gender_valid_mask] == gender_t[gender_valid_mask]).sum()
-            task_correct[2] += gender_correct  # gender accuracy
-            task_samples[2] += gender_valid_mask.sum()
-            
-        if emotion_valid_mask.sum() > 0:
-            emotion_correct = (emotion_predicted[emotion_valid_mask] == emotion_t[emotion_valid_mask]).sum()
-            task_correct[3] += emotion_correct  # emotion accuracy
-            task_samples[3] += emotion_valid_mask.sum()
-        
-        # Print progress only if not using tqdm
-        if not use_tqdm:
-            if batch_idx % 250 == 0:
-                print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
-
-    # Save updated running means to file
-    try:
-        with open(running_means_file, 'w') as f:
-            json.dump(running_means, f, indent=2)
-    except IOError:
-        print(f"Warning: Could not save running means to {running_means_file}")
-
-    # Calcola le metriche finali trasferendo su CPU una sola volta
-    num_batches = len(dataloader)
-    
-    # Loss array: [multitask, age, gender, emotion]
-    losses_array = (task_losses / num_batches).cpu().numpy()
-    
-    # Accuracy array: [overall, age, gender, emotion]
-    accuracies_array = torch.zeros(4)
-    
-    # Calculate per-task accuracies
-    for i in range(1, 4):  # age, gender, emotion
-        if task_samples[i] > 0:
-            accuracies_array[i] = (task_correct[i] / task_samples[i]).cpu()
-        else:
-            accuracies_array[i] = 0.0
-    
-    # Calculate overall accuracy (weighted average)
-    total_correct = task_correct[1] + task_correct[2] + task_correct[3]
-    total_samples = task_samples[1] + task_samples[2] + task_samples[3]
-    if total_samples > 0:
-        accuracies_array[0] = (total_correct / total_samples).cpu()
-    else:
-        accuracies_array[0] = 0.0
-    
-    return losses_array, accuracies_array.numpy()
-
-def old_multitask_epoch_train(model, optimizer, dataloader, losses, task_name, device, text_features=None, use_tqdm=False, num_classes=None):
-    model.train()
-    task_weights = dataloader.dataset.get_task_weights().to(device)
-    # Definisci il numero di classi per ogni task se non fornito
-    if num_classes is None:
-        num_classes = {'age': 9, 'gender': 2, 'emotion': 7}  # Valori di default
-    
-    # Array per le metriche: [multitask/overall, age, gender, emotion]
-    task_losses = torch.zeros(4, device=device)  # [multitask, age, gender, emotion]
-    task_correct = torch.zeros(4, device=device)  # [overall, age, gender, emotion]
-    task_samples = torch.zeros(4, device=device)  # [overall, age, gender, emotion]
-
-    # Use tqdm if requested, otherwise use regular enumerate
-    iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Training") if use_tqdm else enumerate(dataloader)
-
-    for batch_idx, (image, labels) in iterator:
-        image = image.to(device)
-        
-        age_t = labels['age'].to(device)
-        gender_t = labels['gender'].to(device)
-        emotion_t = labels['emotion'].to(device)
-                   
-        text_features = model.get_text_features(normalize=True)
-        with torch.no_grad():
-            image_features = model.get_image_features(image, normalize=True)
-
-        # Calcola i logits per tutti i task in una volta
-        all_logits = model.logit_scale.exp() * (image_features @ text_features.t())        
-        # Dividi i logits per ogni task basandosi sul numero di classi
-        start_idx = 0
-        
-        # Age logits: primi num_classes['age'] logits
-        age_end_idx = start_idx + num_classes['age']
-        age_logits = all_logits[:, start_idx:age_end_idx]
-        start_idx = age_end_idx
-        
-        # Gender logits: successivi num_classes['gender'] logits
-        gender_end_idx = start_idx + num_classes['gender']
-        gender_logits = all_logits[:, start_idx:gender_end_idx]
-        start_idx = gender_end_idx
-        
-        # Emotion logits: rimanenti num_classes['emotion'] logits
-        emotion_end_idx = start_idx + num_classes['emotion']
-        emotion_logits = all_logits[:, start_idx:emotion_end_idx]
-
-        age_loss, age_predicted = losses[0](age_logits, age_t, return_predicted_label=True)
-        gender_loss, gender_predicted = losses[1](gender_logits, gender_t, return_predicted_label=True)
-        emotion_loss, emotion_predicted = losses[2](emotion_logits, emotion_t, return_predicted_label=True)
-
-        loss = task_weights[0]*age_loss + task_weights[1]*gender_loss + task_weights[2]*emotion_loss
-
-        # Backward pass and optimization
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        # Update losses: [multitask, age, gender, emotion]
-        task_losses[0] += loss.detach()  # multitask loss
-        task_losses[1] += age_loss.detach()  # age loss
-        task_losses[2] += gender_loss.detach()  # gender loss
-        task_losses[3] += emotion_loss.detach()  # emotion loss
-        
-        # Update accuracies per task (solo per campioni validi, != -1)
-        age_valid_mask = (age_t != -1)
-        gender_valid_mask = (gender_t != -1)
-        emotion_valid_mask = (emotion_t != -1)
-        
-        if age_valid_mask.sum() > 0:
-            age_correct = (age_predicted[age_valid_mask] == age_t[age_valid_mask]).sum()
-            task_correct[1] += age_correct  # age accuracy
-            task_samples[1] += age_valid_mask.sum()
-            
-        if gender_valid_mask.sum() > 0:
-            gender_correct = (gender_predicted[gender_valid_mask] == gender_t[gender_valid_mask]).sum()
-            task_correct[2] += gender_correct  # gender accuracy
-            task_samples[2] += gender_valid_mask.sum()
-            
-        if emotion_valid_mask.sum() > 0:
-            emotion_correct = (emotion_predicted[emotion_valid_mask] == emotion_t[emotion_valid_mask]).sum()
-            task_correct[3] += emotion_correct  # emotion accuracy
-            task_samples[3] += emotion_valid_mask.sum()
-        
-        # Print progress only if not using tqdm
-        if not use_tqdm:
-            if batch_idx % 250 == 0:
-                print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
-
-    # Calcola le metriche finali trasferendo su CPU una sola volta
-    num_batches = len(dataloader)
-    
-    # Loss array: [multitask, age, gender, emotion]
-    losses_array = (task_losses / num_batches).cpu().numpy()
-    
-    # Accuracy array: [overall, age, gender, emotion]
-    accuracies_array = torch.zeros(4)
-    
-    # Calculate per-task accuracies
-    for i in range(1, 4):  # age, gender, emotion
-        if task_samples[i] > 0:
-            accuracies_array[i] = (task_correct[i] / task_samples[i]).cpu()
-        else:
-            accuracies_array[i] = 0.0
-    
-    # Calculate overall accuracy (weighted average)
-    total_correct = task_correct[1] + task_correct[2] + task_correct[3]
-    total_samples = task_samples[1] + task_samples[2] + task_samples[3]
-    if total_samples > 0:
-        accuracies_array[0] = (total_correct / total_samples).cpu()
-    else:
-        accuracies_array[0] = 0.0
-    
-    return losses_array, accuracies_array.numpy()
-    
-
-#################### VALIDATION FUNCTIONS ####################
-def _specific_task_val_epoch(model, dataloader, losses, task_name, device, text_features=None, use_tqdm=False):
-    model.eval()
-    epoch_loss = torch.tensor(0.0, device=device)
-    total_correct = 0
-    total_samples = 0
-    all_labels = []
-    all_preds = []
-    # Use tqdm if requested, otherwise use regular enumerate
-    iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation") if use_tqdm else enumerate(dataloader)
-    task_idx = 0
-    if task_name == 'gender':
-        task_idx = 1
-    elif task_name == 'emotion':
-        task_idx = 2
-    
-    with torch.no_grad():
-        for batch_idx, (image, labels) in iterator:
-            image = image.to(device)
-            labels = labels[task_idx].to(device)
-            # Forward pass
-            if text_features is None:                
-                # The only possible case where text_features is None is when we train the softCPT so
-                # the get_text_features method don't need the text parameters as the text features
-                # are dinamically generated from the init task names and classes names.
-                text_features = model.get_text_features(normalize=True)
-            
-            image_features = model.get_image_features(image, normalize=True)
-
-            logits  = model.logit_scale.exp() * (image_features @ text_features.t())        
-
-            loss, predicted = losses(logits, labels, return_predicted_label=True)
-
-            # Update epoch metrics
-            epoch_loss += loss.detach().item()
-            total_correct += (predicted == labels).sum().item()  # Somma totale delle predizioni corrette
-            total_samples += labels.size(0)  # Numero totale di campioni
-            
-            all_labels.append(labels.cpu())
-            all_preds.append(predicted.cpu())
-
-            # Print progress only if not using tqdm
-            if not use_tqdm:
-                if batch_idx % 250 == 0:
-                    print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)            
-
-    epoch_accuracy = total_correct / total_samples  # Accuratezza media su tutto il dataset
-    return epoch_loss / len(dataloader), epoch_accuracy, all_preds, all_labels
-
-
-def multitask_epoch_val(model, dataloader, losses, task_name,device, text_features=None, use_tqdm=False, num_classes=None):
-    model.eval()  # Changed from model.train() to model.eval()
-    task_weights = [1.0, 0.1, 1.0]  #dataloader.dataset.get_task_weights().to(device)
-    # Definisci il numero di classi per ogni task se non fornito
-    if num_classes is None:
-        num_classes = {'age': 9, 'gender': 2, 'emotion': 7}  # Valori di default
-    
-    # Array per le metriche: [multitask/overall, age, gender, emotion]
-    task_losses = torch.zeros(4, device=device)  # [multitask, age, gender, emotion]
-    task_correct = torch.zeros(4, device=device)  # [overall, age, gender, emotion]
-    task_samples = torch.zeros(4, device=device)  # [overall, age, gender, emotion]
-
-    # Lists for labels and predictions per task
-    all_labels = [[], [], []]  # [age_labels, gender_labels, emotion_labels]
-    all_preds = [[], [], []]   # [age_preds, gender_preds, emotion_preds]
-
-    # Use tqdm if requested, otherwise use regular enumerate
-    iterator = tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation") if use_tqdm else enumerate(dataloader)
-    with torch.no_grad():
-        for batch_idx, (image, labels) in iterator:
-            image = image.to(device)
-            
-            age_t = labels[0].to(device)
-            gender_t = labels[1].to(device)
-            emotion_t = labels[2].to(device)
-
             text_features = model.get_text_features(normalize=True)
+            with torch.no_grad():
+                image_features = model.get_image_features(images, normalize=True)
 
-            image_features = model.get_image_features(image, normalize=True)
+            # Logits e slicing per task
+            all_logits = model.logit_scale.exp() * (image_features @ text_features.t())  # [B, sumC]
+            logits_list = torch.split(all_logits, num_classes, dim=1)                     # [ [B,C0], [B,C1], ... ]
 
-            # Calcola i logits per tutti i task in una volta
-            all_logits = model.logit_scale.exp() * (image_features @ text_features.t())
-            
-            # Dividi i logits per ogni task basandosi sul numero di classi
-            start_idx = 0
-            
-            # Age logits: primi num_classes['age'] logits
-            age_end_idx = start_idx + num_classes['age']
-            age_logits = all_logits[:, start_idx:age_end_idx]
-            start_idx = age_end_idx
-            
-            # Gender logits: successivi num_classes['gender'] logits
-            gender_end_idx = start_idx + num_classes['gender']
-            gender_logits = all_logits[:, start_idx:gender_end_idx]
-            start_idx = gender_end_idx
-            
-            # Emotion logits: rimanenti num_classes['emotion'] logits
-            emotion_end_idx = start_idx + num_classes['emotion']
-            emotion_logits = all_logits[:, start_idx:emotion_end_idx]
+            raw_losses, preds_list, targets_list = [], [], []
+            for i in range(T):
+                targets_i = labels[:, i]
+                loss_i, pred_i = losses[i](logits_list[i], targets_i, return_predicted_label=True)
+                raw_losses.append(loss_i)
+                preds_list.append(pred_i)
+                targets_list.append(targets_i)
 
-            age_loss = losses[0](age_logits, age_t, return_predicted_label=False)
-            gender_loss = losses[1](gender_logits, gender_t, return_predicted_label=False)
-            emotion_loss = losses[2](emotion_logits, emotion_t, return_predicted_label=False)
+            # RunningMeans (se presente): update (solo train) e scaling
+            if running_means is None:
+                scaled_losses = raw_losses
+            else:
+                if is_train:
+                    running_means.update([float(x.detach().item()) for x in raw_losses])
+                current_rm = []
+                for i in range(T):
+                    v = running_means.get_by_index(i)
+                    current_rm.append(1.0 if (v is None or v <= 0) else v)
+                scaled_losses = [raw / rm for raw, rm in zip(raw_losses, current_rm)]
 
+            total_loss = sum(w * l for w, l in zip(task_weights, scaled_losses))
 
-            age_probs = torch.softmax(age_logits, dim=1)
-            age_indices = torch.arange(9, device=age_probs.device).float()
-            age_pred_continuous = torch.sum(age_probs * age_indices.unsqueeze(0), dim=1)
-            age_predicted = torch.round(age_pred_continuous).long()
-            gender_predicted = torch.argmax(torch.softmax(gender_logits, dim=1), dim=1)
-            emotion_predicted = torch.argmax(torch.softmax(emotion_logits, dim=1), dim=1)
+            if is_train:
+                optimizer.zero_grad(set_to_none=True)
+                total_loss.backward()
+                optimizer.step()
 
+            # accumuli: total (scaled) + raw per task
+            task_losses[0] += total_loss.detach()
+            for i in range(T):
+                task_losses[i + 1] += raw_losses[i].detach()
 
-            loss = task_weights[0]*age_loss + task_weights[1]*gender_loss + task_weights[2]*emotion_loss
+            # accuracy per task (ignora -1)
+            for i in range(T):
+                mask = (targets_list[i] != -1)
+                if mask.any():
+                    task_correct[i + 1] += (preds_list[i][mask] == targets_list[i][mask]).sum()
+                    task_samples[i + 1] += mask.sum()
 
-            # Update losses: [multitask, age, gender, emotion]
-            task_losses[0] += loss.detach()  # multitask loss
-            task_losses[1] += age_loss.detach()  # age loss
-            task_losses[2] += gender_loss.detach()  # gender loss
-            task_losses[3] += emotion_loss.detach()  # emotion loss
-            
-            # Store labels and predictions for each task
-            all_labels[0].append(age_t.cpu())      # age labels
-            all_labels[1].append(gender_t.cpu())   # gender labels
-            all_labels[2].append(emotion_t.cpu())  # emotion labels
-            
-            all_preds[0].append(age_predicted.cpu())      # age predictions
-            all_preds[1].append(gender_predicted.cpu())   # gender predictions
-            all_preds[2].append(emotion_predicted.cpu())  # emotion predictions
-            
-            # Update accuracies per task (solo per campioni validi, != -1)
-            age_valid_mask = (age_t != -1)
-            gender_valid_mask = (gender_t != -1)
-            emotion_valid_mask = (emotion_t != -1)
-            
-            if age_valid_mask.sum() > 0:
-                age_correct = (age_predicted[age_valid_mask] == age_t[age_valid_mask]).sum()
-                task_correct[1] += age_correct  # age accuracy
-                task_samples[1] += age_valid_mask.sum()
-                
-            if gender_valid_mask.sum() > 0:
-                gender_correct = (gender_predicted[gender_valid_mask] == gender_t[gender_valid_mask]).sum()
-                task_correct[2] += gender_correct  # gender accuracy
-                task_samples[2] += gender_valid_mask.sum()
-                
-            if emotion_valid_mask.sum() > 0:
-                emotion_correct = (emotion_predicted[emotion_valid_mask] == emotion_t[emotion_valid_mask]).sum()
-                task_correct[3] += emotion_correct  # emotion accuracy
-                task_samples[3] += emotion_valid_mask.sum()
-            
-            # Print progress only if not using tqdm
-            if not use_tqdm:
-                if batch_idx % 250 == 0:
-                    print(f"Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item()}", end='\r', flush=True)
+            if return_preds:
+                for i in range(T):
+                    all_labels[i].append(targets_list[i].detach().cpu())
+                    all_preds[i].append(preds_list[i].detach().cpu())
 
-    # Calcola le metriche finali trasferendo su CPU una sola volta
+    # Finalizzazione metriche
     num_batches = len(dataloader)
-    
-    # Loss array: [multitask, age, gender, emotion]
-    losses_array = (task_losses / num_batches).cpu().numpy()
-    
-    # Accuracy array: [overall, age, gender, emotion]
-    accuracies_array = torch.zeros(4)
-    
-    # Calculate per-task accuracies
-    for i in range(1, 4):  # age, gender, emotion
+    losses_array = (task_losses / max(1, num_batches)).detach().cpu().numpy()
+
+    accuracies_array = torch.zeros(T + 1)
+    for i in range(1, T + 1):
         if task_samples[i] > 0:
-            accuracies_array[i] = (task_correct[i] / task_samples[i]).cpu()
+            accuracies_array[i] = (task_correct[i] / task_samples[i]).detach().cpu()
         else:
             accuracies_array[i] = 0.0
-    
-    # Calculate overall accuracy (weighted average)
-    total_correct = task_correct[1] + task_correct[2] + task_correct[3]
-    total_samples = task_samples[1] + task_samples[2] + task_samples[3]
-    if total_samples > 0:
-        accuracies_array[0] = (total_correct / total_samples).cpu()
-    else:
-        accuracies_array[0] = 0.0
-    
-    return losses_array, accuracies_array.numpy(), all_preds, all_labels
+    total_correct = task_correct[1: T + 1].sum()
+    total_samples = task_samples[1: T + 1].sum()
+    accuracies_array[0] = (total_correct / total_samples).detach().cpu() if total_samples > 0 else 0.0
+
+    if return_preds:
+        return losses_array, accuracies_array.numpy(), all_preds, all_labels
+    return losses_array, accuracies_array.numpy()
+
+
+# ==========================
+# SINGLE-TASK TRAIN/VAL EPOCH
+# ==========================
+def run_epoch_single_task(model, dataloader, loss_fn, device, mode="train",
+                          task_index=0,               # indice del task singolo (0..T-1)
+                          num_classes=None,           # es. [9, 2, 7]
+                          text_features=None,         # tensor [sum(num_classes), D]
+                          optimizer=None,
+                          use_tqdm=False,
+                          return_preds=False,
+                          use_prefetch=True):
+    """
+    Esegue un'epoca di training/validation in modalità SINGLE-TASK.
+
+    Parametri:
+      - loss_fn: loss callable del task selezionato (deve restituire (loss, pred))
+      - task_index: indice del task nelle colonne di labels e in num_classes
+      - num_classes: lista num classi dei task totali (usata per lo slicing corretto dei logits)
+      - text_features: embedding testuali concatenati per T task (shape [sum(num_classes), D])
+      - NESSUN uso di RunningMeans in single-task, per design
+    Ritorna:
+      - losses_array: [2] -> [total_raw, raw_task]
+      - accuracies_array: [2] -> [acc_task, acc_task] (duplicata per compat)
+      - (opzionale) all_preds, all_labels
+    """
+    is_train = (mode == "train")
+    model.train() if is_train else model.eval()
+
+    if num_classes is None:
+        num_classes = [9, 2, 7]
+    T = len(num_classes)
+
+    assert 0 <= task_index < T, f"task_index {task_index} out of range [0, {T-1}]"
+    assert text_features is not None, "text_features deve essere passato ed essere già sul device corretto"
+    assert text_features.shape[0] == sum(num_classes), (
+        f"text_features ha {text_features.shape[0]} righe ma serve {sum(num_classes)} (somma di num_classes)"
+    )
+
+    # opzionale prefetch su GPU
+    loader = dataloader
+    if use_prefetch and device is not None and getattr(device, "type", None) == 'cuda':
+        try:
+            loader = PrefetchLoader(dataloader, device)
+        except NameError:
+            loader = dataloader
+
+    # metriche (0 = total (= raw), 1 = raw)
+    task_losses = torch.zeros(2, device=device)
+    task_correct = torch.zeros(2, device=device)
+    task_samples = torch.zeros(2, device=device)
+
+    all_labels, all_preds = ([], []) if return_preds else ([], [])
+
+    iterator = tqdm(loader, desc=f"{mode.capitalize()}") if use_tqdm else loader
+
+    with torch.set_grad_enabled(is_train):
+        for images, labels in iterator:
+            if not (hasattr(images, 'device') and images.device == device):
+                images = images.to(device)
+            labels = labels.to(device)  # (B, T)
+
+            with torch.no_grad():
+                image_features = model.get_image_features(images, normalize=True)
+
+            all_logits = model.logit_scale.exp() * (image_features @ text_features.t())  # [B, sumC]
+            logits_list = torch.split(all_logits, num_classes, dim=1)
+
+            targets = labels[:, task_index]
+            loss_raw, pred = loss_fn(logits_list[task_index], targets, return_predicted_label=True)
+
+            total_loss = loss_raw  # nessuna scala/EMA in single-task
+
+            if is_train:
+                optimizer.zero_grad(set_to_none=True)
+                total_loss.backward()
+                optimizer.step()
+
+            task_losses[0] += total_loss.detach()
+            task_losses[1] += loss_raw.detach()
+
+            mask = (targets != -1)
+            if mask.any():
+                task_correct[1] += (pred[mask] == targets[mask]).sum()
+                task_samples[1] += mask.sum()
+
+            if return_preds:
+                all_labels.append(targets.detach().cpu())
+                all_preds.append(pred.detach().cpu())
+
+    num_batches = len(dataloader)
+    losses_array = (task_losses / max(1, num_batches)).detach().cpu().numpy()
+
+    accuracies_array = torch.zeros(2)
+    if task_samples[1] > 0:
+        accuracies_array[1] = (task_correct[1] / task_samples[1]).detach().cpu()
+    accuracies_array[0] = accuracies_array[1]
+
+    if return_preds:
+        return losses_array, accuracies_array.numpy(), all_preds, all_labels
+    return losses_array, accuracies_array.numpy()
+
 
 
 def get_model(cfg):
