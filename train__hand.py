@@ -177,7 +177,6 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
     preds_per_task = [[] for _ in range(num_task)] # For each task I will store the predicted labels
     labels_per_task = [[] for _ in range(num_task)] # For each task I will store the true labels
 
-    scale = model.logit_scale.exp()
     if text_features is not None:
         text_features = text_features.T.contiguous()
 
@@ -195,7 +194,7 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
         with torch.set_grad_enabled(config.NUM_VISUAL_PROMPT!=0):
             image_features = model.get_image_features(image, normalize=True)
 
-        logits = scale * (image_features @ text_features)
+        logits = model.logit_scale.exp() * (image_features @ text_features)
 
         logits_by_task = torch.split(logits, logit_split, dim=1)  # tuple di view
 
@@ -252,7 +251,6 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
 def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, text_features=None):
     model.eval()
     compute_text_features = text_features is None or config.NUM_TEXT_CNTX > 0
-    # If I am training SoftCPT than text_embedding will be None, otherwise they doesn't change during the training
 
     iterator = tqdm(dataloader) if config.USE_TQDM else dataloader
 
@@ -264,12 +262,10 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
     else:
         task_weight = task_weight.to(device)
 
-    # accumultaros for loss and metrics tracking
-    losses_sums = torch.zeros(num_task+1, device=device)  # +1 for the total loss
+    losses_sums = torch.zeros(num_task+1, device=device)
 
-    # Needed to compute the accuracy score
-    preds_per_task = [[] for _ in range(num_task)] # For each task I will store the predicted labels
-    labels_per_task = [[] for _ in range(num_task)] # For each task I will store the true labels
+    preds_per_task = [[] for _ in range(num_task)]
+    labels_per_task = [[] for _ in range(num_task)]
 
     num_batch = 0
     with torch.inference_mode():
@@ -279,15 +275,12 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
             image = image.to(device, non_blocking=True)
             labels = label.to(device, non_blocking=True)
 
-
             if compute_text_features:
                 text_features = model.get_text_features(normalize=True)
             
             image_features = model.get_image_features(image, normalize=True)
-
             logits = model.logit_scale.exp() * (image_features @ text_features.T)
-
-            logits_by_task = torch.split(logits, logit_split, dim=1)  # tuple di view
+            logits_by_task = torch.split(logits, logit_split, dim=1)
 
             total_loss = 0.0
 
@@ -297,8 +290,8 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
 
                 valid_mask = labels[:, i] != -1
                 if valid_mask.any():
-                    preds_per_task[i].append(pred_i[valid_mask].detach().cpu())
-                    labels_per_task[i].append(labels[valid_mask, i].detach().cpu())
+                    preds_per_task[i].append(pred_i[valid_mask].detach())  # SU GPU
+                    labels_per_task[i].append(labels[valid_mask, i].detach())  # SU GPU
 
                 total_loss = total_loss + task_weight[i] * loss_i
 
@@ -307,7 +300,6 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
             if not config.USE_TQDM and (num_batch + 1)%100 == 0:
                 print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r')
 
-    # Compute the average losses and accuracy
     accuracies = []
     all_preds_list, all_labels_list = [], []
     for i in range(num_task):
@@ -316,13 +308,14 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
             all_labels = torch.cat(labels_per_task[i], dim=0)
             acc = (all_preds == all_labels).float().mean().item()
         else:
-            all_preds  = torch.empty(0, dtype=torch.long)
-            all_labels = torch.empty(0, dtype=torch.long)
+            all_preds  = torch.empty(0, dtype=torch.long, device=device)
+            all_labels = torch.empty(0, dtype=torch.long, device=device)
             acc = float('nan')
 
         accuracies.append(acc)
-        all_preds_list.append(all_preds)
-        all_labels_list.append(all_labels)
+        # Porta su CPU prima di restituire
+        all_preds_list.append(all_preds.cpu())
+        all_labels_list.append(all_labels.cpu())
 
     mean_loss = [(losses_sums[i]/num_batch).item() for i in range(num_task+1)]
 
@@ -331,7 +324,6 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
 def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, device, task_weight, config, text_features=None):
     ''' Gestisce unicamente il VPT'''
     model.train()    
-    
     iterator = tqdm(dataloader) if config.USE_TQDM else dataloader        
     
     # Accumulatori per loss e metriche
@@ -339,7 +331,7 @@ def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, de
     preds_list = []
     labels_list = []
     
-    scale = model.logit_scale.exp()
+    
     if text_features is not None:
         text_features = text_features.T.contiguous()
     
@@ -350,7 +342,8 @@ def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, de
         image = image.to(device, non_blocking=True)
         labels = label[:, config.TASK].to(device, non_blocking=True)
                                         
-                
+        scale = model.logit_scale.exp()
+
         image_features = model.get_image_features(image, normalize=True)
         
         logits = scale * (image_features @ text_features)
@@ -405,11 +398,7 @@ def single_task_val_fn(model, dataloader, loss_fn, device, task_weight, config, 
             num_batch += 1
             
             image = image.to(device, non_blocking=True)
-            labels = label.to(device, non_blocking=True)
-            
-            # Per single task, labels è 1D invece di 2D
-            if labels.dim() > 1:
-                labels = labels[:, config.TASK]
+            labels = label[:,config.TASK].to(device, non_blocking=True)
             
             if compute_text_features:
                 text_features = model.get_text_features(normalize=True)
@@ -420,13 +409,9 @@ def single_task_val_fn(model, dataloader, loss_fn, device, task_weight, config, 
             # Calcola loss e predizioni
             loss, pred = loss_fn(logits, labels, return_predicted_label=True)
             total_loss_sum += loss.detach()
-            
-            # Filtra campioni validi
-            valid_mask = labels != -1
-            if valid_mask.any():
-                preds_list.append(pred[valid_mask].detach().cpu())
-                labels_list.append(labels[valid_mask].detach().cpu())
-            
+            preds_list.append(pred.detach().cpu())
+            labels_list.append(labels.detach().cpu())
+
             if not config.USE_TQDM and (num_batch + 1) % 100 == 0:
                 print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r')
     
@@ -488,7 +473,7 @@ def main():
         pin_memory=True,
         pin_memory_device="cuda",
         persistent_workers=True,
-        prefetch_factor=4,
+        prefetch_factor=2,
         drop_last=True
 )
     
@@ -501,7 +486,7 @@ def main():
         pin_memory=True,
         pin_memory_device="cuda",
         persistent_workers=True,
-        prefetch_factor=4,
+        prefetch_factor=2,
         drop_last=True,
     )
 
@@ -554,20 +539,20 @@ def main():
     print(f"Validation batch {type(val_loader)} of size: {len(val_loader)}")
 
     print(f"\n\nLoss function:")
-    '''
+    
     for i, loss in enumerate(loss_fn):
         if type(loss) is MaskedLoss:
             print(f"  Task {i}: {type(loss.base_loss)} with ignore index {loss.ignore_index}")
         else:
             print(f"  Task {i}: {type(loss)}")
-    '''
+    
 
     ########################## METRICS TRACKER #####################################################
     tracker = None
 
     num_tasks = len(config.TASK_NAMES) if config.TASK == -1 else 1
     output_dir = config.OUTPUT_DIR
-    task_names = config.TASK_NAMES
+    task_names = config.TASK_NAMES if config.TASK == -1 else [config.TASK_NAMES[config.TASK]]
     class_names = config.CLASSES
 
     if config.TASK == -1:        
@@ -582,10 +567,10 @@ def main():
         tracker = MultitaskTracker(
             num_tasks=1,
             output_dir=output_dir,
-            task_names=[task_names[config.TASK]],
+            task_names=task_names,
             class_names=[class_names[config.TASK]]
         )
-        print(f"Tracking metrics for task {task_names[config.TASK]}")
+        print(f"Tracking metrics for task {task_names[0]}")
 
     ######################## EARLY STOPPING BASED ON LOSS ###################################
 
@@ -624,8 +609,13 @@ def main():
         print(f"Text features shapes per task: {[tf.shape for tf in all_text_features]}")
 
     task_weight = training_set.get_task_weights().to(DEVICE)
+    model.save_text_features(
+        text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/temp_text_features.pt"),
+        normalize=True
+    )
 
 
+    '''
     val_loss, val_acc, all_preds_list, all_labels_list = val_fn(model, val_loader, loss_fn, DEVICE, task_weight, config, text_features)
     
 
@@ -633,8 +623,8 @@ def main():
         print(f"  Task '{task_names[t]}': Loss = {val_loss[t]:.4f}, Accuracy = {val_acc[t]:.4f}")
     if num_tasks > 1:
         print(f"  Total Loss: {val_loss[-1]:.4f}, Mean Accuracy : {sum(val_acc)/num_tasks:.4f}")
-
-
+'''
+    
     for epoch in range(config.EPOCHS):
 
         train_loss, train_acc = train_fn(model, train_loader, optimizer, running_mean, loss_fn, DEVICE, task_weight, config, text_features)
@@ -674,7 +664,7 @@ def main():
             best_val_loss = val_loss[-1]
             epochs_without_improvement = 0
             print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
-            torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_model.pth"))
+            torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_model.pt"))
         else:
             epochs_without_improvement += 1
             print(f"No improvement in validation loss. Epochs without improvement: {epochs_without_improvement}/{patience}")
@@ -682,8 +672,11 @@ def main():
         if epochs_without_improvement >= patience:
             print("Early stopping triggered.")
             break
-
-        torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pth"))
-
+        if config.TUNING.lower() == "softcpt":
+            model.save_text_features(
+            text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/temp_text_features.pt"),
+            normalize=True
+        )
+        torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))        
 
 main()

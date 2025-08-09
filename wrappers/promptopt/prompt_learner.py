@@ -295,3 +295,23 @@ class CustomModel(nn.Module):
         if normalize:
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         return image_features
+    
+    def save_text_features(self, text_features_path: str, normalize: bool = True):
+        """
+        Calcola e salva le text features (normalizzate) pronte per essere caricate da PECore_Vision.
+        """
+        import os
+        os.makedirs(os.path.dirname(text_features_path), exist_ok=True)
+        text_features = self.get_text_features(normalize=normalize).detach().cpu()
+        torch.save({'text_features': text_features}, text_features_path)
+        print(f"[CustomModel] Text features salvate in: {text_features_path} (shape: {text_features.shape})")
+
+    def save_for_training(self, save_path: str):
+        """
+        Salva tutto il modello (inclusi tutti i pesi dei vari prompt learner e task prompt learner)
+        per poter riprendere l'addestramento dai pesi appresi.
+        """
+        import os
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        torch.save(self.state_dict(), save_path)
+        print(f"[CustomModel] Modello completo salvato per training in: {save_path}")

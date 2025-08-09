@@ -1,10 +1,10 @@
 {
-    "TUNING" : "VPT",
+    "TUNING" : "SoftCpt",
     "MODEL"  : "PECore",
-    "TASK"   : 0,
+    "TASK"   : -1,
 
-    "NUM_VISUAL_PROMPT" : 10,
-    "NUM_TEXT_CNTX" : 0,
+    "NUM_VISUAL_PROMPT" : 0,
+    "NUM_TEXT_CNTX" : 16,
     "TASK_NAMES": ["age-group estimation", "gender classification", "emotion recognition"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
@@ -44,17 +44,17 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB"],
+        "-1" : [],
         "0"  : ["FairFace"],   
-        "1"  : ["MiviaGender"],
+        "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 100,
+    "BATCH_SIZE" : 512,
     "NUM_WORKERS" : 4,
-    "LR" : 1e-3,
-    "OUTPUT_DIR" : "../TRAIN/SoftCPT16",
+    "LR" : 1e-4,
+    "OUTPUT_DIR" : "../TRAIN/EXP1",
     "VERBOSE": true,
     "USE_TQDM":true,
     "EPOCHS" : 5
