@@ -172,7 +172,118 @@ class WeightCalculationMixin:
         return weights_tensor
 
 
+import math
+import numpy as np
+import pandas as pd
+from PIL import Image
+import os
+import torch
+from torch.utils.data import Dataset
+
 class BaseDataset(Dataset, WeightCalculationMixin):
+    def __init__(self, root, transform=None, split="train", verbose=False,
+                 limit_fraction=0.7, subset_seed=2025, only_for="vggface2"):
+        self.verbose = verbose
+        self.root = root
+        self.transform = transform
+        self.split = split
+        self.base_root = root.split("datasets_with_standard_labels")[0]
+        self.split_path = os.path.join(root, split)
+        self.labels_path = os.path.join(self.split_path, "labels.csv")
+        self.data = pd.read_csv(self.labels_path)
+
+        # --- SOLO PER VGGFace2 (train): riduci mantenendo la distribuzione di age_group ---
+        is_target =  only_for.lower() in self.root.lower()
+        if is_target and self.split == "train" and 0 < limit_fraction < 1:
+            N = len(self.data)
+            target_size = int(math.ceil(limit_fraction * N))
+            remove_total = N - target_size
+            if remove_total > 0:
+                rng = np.random.RandomState(subset_seed)
+
+                # costruiamo una serie temporanea con gli age_group secondo la tua logica base (fillna -> map)
+                tmp_age_groups = self.data['Age'].fillna(-1).apply(map_age_to_group)
+
+                # conteggi per classe
+                counts = tmp_age_groups.value_counts()
+                # maggioritarie: sopra la media; se non basta, sopra la mediana; altrimenti tutte
+                eligible = counts[counts > counts.mean()]
+                if eligible.sum() < remove_total:
+                    eligible = counts[counts >= counts.median()]
+                if eligible.sum() < remove_total:
+                    eligible = counts  # ultima spiaggia: tutte
+
+                # probabilità di rimozione proporzionali alla numerosità delle classi eleggibili
+                probs = (eligible / eligible.sum()).values
+                classes = eligible.index.tolist()
+
+                # allocazione dei remove per classe (multinomial)
+                alloc = rng.multinomial(remove_total, probs)
+
+                # per ogni classe, scegli a caso gli indici da rimuovere
+                to_drop_idx = []
+                for cls, k in zip(classes, alloc):
+                    if k == 0:
+                        continue
+                    cls_idx = self.data.index[tmp_age_groups == cls].to_numpy()
+                    # se alloc eccede la classe per arrotondamenti (raro), taglia a cap
+                    k = min(k, len(cls_idx))
+                    picked = rng.choice(cls_idx, size=k, replace=False)
+                    to_drop_idx.append(picked)
+
+                if to_drop_idx:
+                    to_drop_idx = np.concatenate(to_drop_idx)
+                    keep_mask = ~self.data.index.isin(to_drop_idx)
+                    self.data = self.data.loc[keep_mask].reset_index(drop=True)
+
+                if self.verbose:
+                    print(f"[BaseDataset] Reduced VGGFace2 train from {N} to {len(self.data)} "
+                        f"({int(limit_fraction*100)}%) by dropping from majority age_groups.")
+
+        # --- LOGICA BASE INVARIATA ---
+        raw_paths = self.data['Path'].values
+        self.img_paths = [os.path.join(self.base_root, path.replace("\\","/") + ".jpg") for path in raw_paths]
+
+        self.genders = self.data['Gender'].fillna(-1).values
+        raw_ages = self.data['Age'].fillna(-1).values
+        self.age_groups = [map_age_to_group(age) for age in raw_ages]
+        self.emotions = self.data['Facial Emotion'].fillna(-1).values
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img_path = self.img_paths[idx]
+        image = Image.open(img_path).convert('RGB')
+        if self.transform:
+            image = self.transform(image)
+
+        label = torch.tensor([
+            self.age_groups[idx],
+            self.genders[idx],
+            self.emotions[idx]
+        ], dtype=torch.long)
+        return image, label
+
+    def _get_all_labels_for_task(self, task_idx: int):
+        if task_idx == AGE_IDX:
+            return self.age_groups
+        elif task_idx == GENDER_IDX:
+            return self.genders
+        elif task_idx == EMOTION_IDX:
+            return self.emotions
+        else:
+            raise ValueError(f"Unknown task idx: {task_idx}. Must be 0,1,2")
+
+    def _get_task_counts_and_total_len(self):
+        task_counts = {
+            AGE_IDX: sum(1 for age in self.age_groups if age != -1),
+            GENDER_IDX: sum(1 for gender in self.genders if gender != -1),
+            EMOTION_IDX: sum(1 for emotion in self.emotions if emotion != -1),
+        }
+        return task_counts, len(self)
+
+class _BaseDataset(Dataset, WeightCalculationMixin):
     def __init__(self, root: str, transform=None, split="train", verbose=False):
         self.verbose = verbose
         self.root = root
@@ -346,7 +457,9 @@ class TaskBalanceDataset(Dataset, WeightCalculationMixin):
             dataset_path = os.path.join(datasets_root, dataset_name)
             if os.path.exists(os.path.join(dataset_path, split)):
                 try:
-                    dataset = BaseDataset(root=dataset_path, transform=transform, split=split)
+                    dataset = BaseDataset(root=dataset_path, transform=transform, split=split, limit_fraction=0.5,     # <-- 70%
+                                           subset_seed=2025,        # riproducibile
+                                           only_for="vggface2")
                     self.datasets.append(dataset)
                     self.dataset_lengths.append(len(dataset))
                     self.cumulative_lengths.append(self.cumulative_lengths[-1] + len(dataset))
@@ -553,6 +666,20 @@ if __name__ == "__main__":
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
+    print("\n" + "="*80)
+    print("Testing BaseDataset")
+    
+    base_dataset = BaseDataset(
+        root="../processed_datasets/datasets_with_standard_labels/VggFace2",
+        transform=test_transforms,
+        split="train",
+        verbose=True,
+        limit_fraction=0.0,
+        subset_seed=2025
+    )
+
+    base_dataset.get_class_weights(0)
+    exit(0)
     try:
         print("\n" + "="*60)
         print("=== TESTING BaseDataset ===")
