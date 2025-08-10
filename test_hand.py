@@ -34,7 +34,7 @@ def get_prediction(age, gender, emotion):
     emotion_logit = emotion
 
     age_prob = torch.softmax(age_logit, dim=1)
-    age_pred = torch.round(torch.sum(age_prob * torch.arange(0, 9, device=age_prob.device).unsqueeze(0), dim=1))
+    age_pred = torch.round(torch.sum(age_prob * torch.arange(9, device=age_prob.device).unsqueeze(0), dim=1))
     gender_pred = torch.argmax(gender_logit, dim=1)
     emotion_pred = torch.argmax(emotion_logit, dim=1)
     return age_pred, gender_pred, emotion_pred
@@ -43,7 +43,7 @@ def get_prediction(age, gender, emotion):
 def load_model(text_features_path, vpt_files):
 
     vision_cfg = PE_VISION_CONFIG["PE-Core-B16-224"]
-    num_prompt = 0
+    num_prompt = 40
     num_classes = (9, 2, 7)
     device = "cuda"
     # 2. Istanzia il modello con 3 VPT
@@ -67,19 +67,19 @@ def load_model(text_features_path, vpt_files):
     model.eval()
     return model, device
 
-output_dir = "../TRAIN/SoftCPT16"
+output_dir = "./../TRAIN/EXP2/"
 
-vision_ckpt = os.path.join(output_dir, "ckpt", "pecore_vision.pth")  # Modifica il percorso se necessario
-text_features_path = os.path.join(output_dir, "ckpt", "temp_text_features.pt")
+vision_ckpt = os.path.join(output_dir, "ckpt", "best_model.pt")  # Modifica il percorso se necessario
+text_features_path = os.path.join(output_dir, "ckpt", "vpt_text_features.pt")
 vpt_files = [
-    
+    os.path.join(output_dir, "ckpt", f"best_model.pt")
 ]
 
 model, device = load_model( text_features_path, vpt_files)
 
 
 test_dataset = MultiDataset(
-    dataset_names=['LFW', 'MiviaGender', 'RAF-DB', 'UTKFace'],
+    dataset_names=["UTKFace", "RAF-DB"],#['LFW', 'MiviaGender', 'RAF-DB', 'UTKFace', "FairFace"],
     transform=transforms.get_image_transform(224),
     split="test",
     datasets_root="/user/amolinario/processed_datasets/datasets_with_standard_labels/",
@@ -90,6 +90,8 @@ test_dataset = MultiDataset(
 dataloader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2, pin_memory=True)
 
 os.makedirs("../TEST", exist_ok=True)
+
+print(f"TEXT FEATURES {model.text_features.shape}")
 
 # Initialize as empty tensors on GPU
 all_age_preds = []

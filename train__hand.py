@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as T
 import matplotlib.pyplot as plt
 from torchvision import transforms as T
+from torch.cuda.amp import autocast, GradScaler
 
 from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
@@ -155,7 +156,7 @@ def get_augmentation_transform(config):
     
     return T.Compose(tform)
 
-def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, device, task_weight, config, text_features=None):
+def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, device, task_weight, config, text_features=None, scaler=None):
     model.train()
     compute_text_features = text_features is None or config.NUM_TEXT_CNTX > 0
     # If I am training SoftCPT than text_embedding will be None, otherwise they doesn't change during the training
@@ -187,47 +188,49 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
         image = image.to(device, non_blocking=True)
         labels = label.to(device, non_blocking=True)
 
-
         if compute_text_features:
             text_features = model.get_text_features(normalize=True).T.contiguous()        
 
-        with torch.set_grad_enabled(config.NUM_VISUAL_PROMPT!=0):
-            image_features = model.get_image_features(image, normalize=True)
+        with autocast():
+            with torch.set_grad_enabled(config.NUM_VISUAL_PROMPT!=0):
+                image_features = model.get_image_features(image, normalize=True)
 
-        logits = model.logit_scale.exp() * (image_features @ text_features)
+            logits = model.logit_scale.exp() * (image_features @ text_features)
 
-        logits_by_task = torch.split(logits, logit_split, dim=1)  # tuple di view
+            logits_by_task = torch.split(logits, logit_split, dim=1)  # tuple di view
 
-        total_loss = 0.0
+            total_loss = 0.0
 
-        for i in range(len(loss_fn)):
-            loss_i, pred_i = loss_fn[i](logits_by_task[i], labels[:, i], return_predicted_label=True)
-            losses_sums[i] += loss_i.detach()
+            for i in range(len(loss_fn)):
+                loss_i, pred_i = loss_fn[i](logits_by_task[i], labels[:, i], return_predicted_label=True)
+                losses_sums[i] += loss_i.detach()
 
-            valid_mask = labels[:, i] != -1
-            if valid_mask.any():
-                preds_per_task[i].append(pred_i[valid_mask].detach().cpu())
-                labels_per_task[i].append(labels[valid_mask, i].detach().cpu())
-            
-            
+                valid_mask = labels[:, i] != -1
+                if valid_mask.any():
+                    preds_per_task[i].append(pred_i[valid_mask].detach().cpu())
+                    labels_per_task[i].append(labels[valid_mask, i].detach().cpu())
 
-            scaled_loss = loss_i
-            if running_mean is not None:
-                prev_mean = running_mean.get_by_index(i)
-                scale = 1.0 if (prev_mean is None) else max(prev_mean, 1e-8)
-                scaled_loss = loss_i / scale
-                running_mean.update_by_idx(loss_i.item(), i)
-            else:
                 scaled_loss = loss_i
+                if running_mean is not None:
+                    prev_mean = running_mean.get_by_index(i)
+                    scale = 1.0 if (prev_mean is None) else max(prev_mean, 1e-8)
+                    scaled_loss = loss_i / scale
+                    running_mean.update_by_idx(loss_i.item(), i)
+                else:
+                    scaled_loss = loss_i
 
-            total_loss = total_loss + task_weight[i] * scaled_loss
-        
-            
+                total_loss = total_loss + task_weight[i] * scaled_loss
+
         optimizer.zero_grad(set_to_none=True)
-        total_loss.backward()
-        optimizer.step()
+        if scaler is not None:
+            scaler.scale(total_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            total_loss.backward()
+            optimizer.step()
 
-        losses_sums[-1] += total_loss.detach()  
+        losses_sums[-1] += total_loss.detach()
         if not config.USE_TQDM and (num_batch + 1)%100 == 0:
                 print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r')
 
@@ -321,7 +324,7 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
 
     return mean_loss, accuracies, all_preds_list, all_labels_list
 
-def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, device, task_weight, config, text_features=None):
+def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, device, task_weight, config, text_features=None, scaler=None):
     ''' Gestisce unicamente il VPT'''
     model.train()    
     iterator = tqdm(dataloader) if config.USE_TQDM else dataloader        
@@ -344,21 +347,20 @@ def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, de
                                         
         scale = model.logit_scale.exp()
 
-        image_features = model.get_image_features(image, normalize=True)
+        with autocast():
+            image_features = model.get_image_features(image, normalize=True)
+            logits = scale * (image_features @ text_features)
+            loss, pred = loss_fn(logits, labels, return_predicted_label=True)
         
-        logits = scale * (image_features @ text_features)
-        
-        # Calcola loss e predizioni
-        loss, pred = loss_fn(logits, labels, return_predicted_label=True)
-                
-        
-        # Backpropagation
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         
-
-    
         preds_list.append(pred.detach().cpu())
         labels_list.append(labels.detach().cpu())
 
@@ -516,6 +518,9 @@ def main():
         
     optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=0.0)
 
+    # Add GradScaler for mixed precision
+    scaler = GradScaler()
+
     ''' ---------------------- TO REMOVE ONLY FOR DEBUGGING PURPOSES -------------------------'''
 
     param_to_name = {p: n for n, p in model.named_parameters()}
@@ -598,6 +603,13 @@ def main():
             task_text_features = model.get_text_features(text=text, normalize=True)
             all_text_features.append(task_text_features)
         
+        if config.TUNING.lower() != "softcpt":
+            model.save(
+                save_path=os.path.join(config.OUTPUT_DIR, f"ckpt/initial_model.pt"),
+                text_features=torch.cat(all_text_features, dim=0),
+                text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_text_features.pt"),
+            )
+
         # Concatenate all task text features
         if config.TASK == -1:
             text_features = torch.cat(all_text_features, dim=0)
@@ -609,10 +621,7 @@ def main():
         print(f"Text features shapes per task: {[tf.shape for tf in all_text_features]}")
 
     task_weight = training_set.get_task_weights().to(DEVICE)
-    model.save_text_features(
-        text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/temp_text_features.pt"),
-        normalize=True
-    )
+    
 
 
     '''
@@ -627,7 +636,7 @@ def main():
     
     for epoch in range(config.EPOCHS):
 
-        train_loss, train_acc = train_fn(model, train_loader, optimizer, running_mean, loss_fn, DEVICE, task_weight, config, text_features)
+        train_loss, train_acc = train_fn(model, train_loader, optimizer, running_mean, loss_fn, DEVICE, task_weight, config, text_features, scaler)
         
         if running_mean is not None:
             running_mean.plot(os.path.join(config.OUTPUT_DIR, "running_mean_train.png"))
@@ -664,6 +673,11 @@ def main():
             best_val_loss = val_loss[-1]
             epochs_without_improvement = 0
             print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
+            if config.TUNING.lower() == "softcpt":
+                model.save_text_features(
+                text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/best_soft_cpt_text_features.pt"),
+                normalize=True
+            )
             torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_model.pt"))
         else:
             epochs_without_improvement += 1
@@ -672,11 +686,12 @@ def main():
         if epochs_without_improvement >= patience:
             print("Early stopping triggered.")
             break
+
         if config.TUNING.lower() == "softcpt":
             model.save_text_features(
-            text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/temp_text_features.pt"),
+            text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/latest_soft_cpt_text_features.pt"),
             normalize=True
         )
-        torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))        
+        torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))
 
 main()

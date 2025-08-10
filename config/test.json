@@ -1,10 +1,10 @@
 {
-    "TUNING" : "SoftCpt",
+    "TUNING" : "vpt",
     "MODEL"  : "PECore",
     "TASK"   : -1,
 
-    "NUM_VISUAL_PROMPT" : 0,
-    "NUM_TEXT_CNTX" : 16,
+    "NUM_VISUAL_PROMPT" : 40,
+    "NUM_TEXT_CNTX" : 0,
     "TASK_NAMES": ["age-group estimation", "gender classification", "emotion recognition"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
@@ -51,11 +51,11 @@
     },    
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 512,
+    "BATCH_SIZE" : 128,
     "NUM_WORKERS" : 4,
     "LR" : 1e-4,
-    "OUTPUT_DIR" : "../TRAIN/EXP1",
+    "OUTPUT_DIR" : "../TRAIN/EXP2",
     "VERBOSE": true,
-    "USE_TQDM":true,
-    "EPOCHS" : 5
+    "USE_TQDM":false,
+    "EPOCHS" : 10
 }
