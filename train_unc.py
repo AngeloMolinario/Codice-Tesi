@@ -157,7 +157,7 @@ def get_augmentation_transform(config):
     
     return T.Compose(tform)
 
-def _multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, device, task_weight, config, text_features=None, scaler=None):
+def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, device, task_weight, config, text_features=None, scaler=None):
     model.train()
     compute_text_features = text_features is None or config.NUM_TEXT_CNTX > 0
     # If I am training SoftCPT than text_embedding will be None, otherwise they doesn't change during the training
@@ -175,8 +175,10 @@ def _multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, dev
     # accumultaros for loss and metrics tracking
     losses_sums = torch.zeros(num_task+1, device=device)  # +1 for the total loss
 
-    correct = [torch.zeros(1, device=device) for _ in range(num_task)]
-    count   = [torch.zeros(1, device=device) for _ in range(num_task)]
+    # Needed to compute the accuracy score
+    preds_per_task = [[] for _ in range(num_task)] # For each task I will store the predicted labels
+    labels_per_task = [[] for _ in range(num_task)] # For each task I will store the true labels
+
     if text_features is not None:
         text_features = text_features.T.contiguous()
 
@@ -206,18 +208,21 @@ def _multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, dev
 
                 valid_mask = labels[:, i] != -1
                 if valid_mask.any():
-                    correct[i] += (pred_i[valid_mask] == labels[valid_mask, i]).sum()
-                    count[i]   += valid_mask.sum()
+                    preds_per_task[i].append(pred_i[valid_mask].detach().cpu())
+                    labels_per_task[i].append(labels[valid_mask, i].detach().cpu())
 
                 scaled_loss = loss_i
+                
                 if running_mean is not None:
-                    prev_mean = running_mean.get_by_index(i)
+                    running_mean.update_by_idx(loss_i.item(), i)
+                    '''
+                    prev_mean = running_mean.get_by_index(i)                
                     scale = 1.0 if (prev_mean is None) else max(prev_mean, 1e-8)
                     scaled_loss = loss_i / scale
                     running_mean.update_by_idx(loss_i.item(), i)
                 else:
                     scaled_loss = loss_i
-
+                '''
                 total_loss = total_loss + task_weight[i] * scaled_loss
 
         optimizer.zero_grad(set_to_none=True)
@@ -234,114 +239,20 @@ def _multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, dev
                 print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r')
 
     # Compute the average losses and accuracy
-    accuracies = [(correct[i] / count[i]).item() if count[i] > 0 else float('nan')
-              for i in range(num_task)]
+    accuracies = []
+    for i in range(num_task):
+        if preds_per_task[i]:  # se abbiamo dati validi
+            all_preds  = torch.cat(preds_per_task[i])
+            all_labels = torch.cat(labels_per_task[i])
+            acc = (all_preds == all_labels).float().mean().item()
+        else:
+            acc = float('nan')  # nessun campione valido per il task
+        accuracies.append(acc)
 
     mean_loss = [(losses_sums[i]/num_batch).item() for i in range(num_task+1)]
 
     return mean_loss, accuracies
 
-from torch.cuda.amp import autocast
-
-def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, device, task_weight, config, text_features=None, scaler=None):
-    model.train()
-    compute_text_features = text_features is None or config.NUM_TEXT_CNTX > 0
-    iterator = tqdm(dataloader) if config.USE_TQDM else dataloader
-
-    logit_split = [len(c) for c in config.CLASSES]
-    num_task = len(loss_fn)
-    
-    # accumulators
-    losses_sums = torch.zeros(num_task + 1, device=device)  # per-task + total
-    correct = [torch.zeros(1, device=device) for _ in range(num_task)]
-    count   = [torch.zeros(1, device=device) for _ in range(num_task)]
-
-    if text_features is not None:
-        text_features = text_features.T.contiguous()
-
-    num_batch = 0
-    eps = 1e-8
-    alpha_w = 0.5                 # esponente pesi dinamici (0.3–0.7 tipico)
-    clip_min, clip_max = 0.5, 2.0 # clipping leggero
-
-    for image, label in iterator:
-        num_batch += 1
-        image = image.to(device, non_blocking=True)
-        labels = label.to(device, non_blocking=True)
-
-        if compute_text_features:
-            text_features = model.get_text_features(normalize=True).T.contiguous()
-
-        with autocast():
-            with torch.set_grad_enabled(config.NUM_VISUAL_PROMPT != 0):
-                image_features = model.get_image_features(image, normalize=True)
-
-            logits = model.logit_scale.exp() * (image_features @ text_features)
-            logits_by_task = torch.split(logits, logit_split, dim=1)
-
-            # --- un solo loop: loss + pesi dinamici + accumuli ---
-            sum_wloss = 0.0
-            sum_w = 0.0
-            losses_for_ema = []
-            mu0 = None  # ancoraggio relativo
-
-            for i in range(num_task):
-                loss_i, pred_i = loss_fn[i](logits_by_task[i], labels[:, i], return_predicted_label=True)
-                losses_sums[i] += loss_i.detach()
-
-                # accuracy su label valide
-                valid_mask = labels[:, i] != -1
-                if valid_mask.any():
-                    correct[i] += (pred_i[valid_mask] == labels[valid_mask, i]).sum()
-                    count[i]   += valid_mask.sum()
-
-                # pesi dinamici EMA
-                if running_mean is not None:
-                    mu_i = running_mean.get_by_index(i)
-                    mu_i = max(mu_i if mu_i is not None else 1.0, eps)
-                    if mu0 is None:
-                        mu0 = mu_i
-                    raw_w_i = (mu0 / mu_i) ** alpha_w
-                    # clipping
-                    if raw_w_i < clip_min: raw_w_i = clip_min
-                    elif raw_w_i > clip_max: raw_w_i = clip_max
-                else:
-                    raw_w_i = 1.0
-
-                wi = raw_w_i * task_weight[i]
-                sum_wloss = sum_wloss + wi * loss_i
-                sum_w     = sum_w + wi
-
-                losses_for_ema.append(loss_i.detach().item())
-
-            # normalizza per mantenere scala ~ num_task
-            total_loss = (num_task / (sum_w + eps)) * sum_wloss
-
-        optimizer.zero_grad(set_to_none=True)
-        if scaler is not None:
-            scaler.scale(total_loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            total_loss.backward()
-            optimizer.step()
-
-        # aggiorna EMA DOPO lo step (robusto a AMP/accumulation)
-        if running_mean is not None:
-            for i, li in enumerate(losses_for_ema):
-                running_mean.update_by_idx(li, i)
-
-        losses_sums[-1] += total_loss.detach()
-
-        if not config.USE_TQDM and (num_batch + 1) % 100 == 0:
-            print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r')
-
-    # metriche finali
-    accuracies = [(correct[i] / count[i]).item() if count[i] > 0 else float('nan')
-                  for i in range(num_task)]
-    mean_loss = [(losses_sums[i] / num_batch).item() for i in range(num_task + 1)]
-
-    return mean_loss, accuracies
 
 
 def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, text_features=None):
@@ -364,7 +275,7 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
     labels_per_task = [[] for _ in range(num_task)]
 
     num_batch = 0
-    with torch.no_grad():
+    with torch.inference_mode():
         for image, label in iterator:
             num_batch += 1
 
@@ -386,8 +297,8 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
 
                 valid_mask = labels[:, i] != -1
                 if valid_mask.any():
-                    preds_per_task[i].append(pred_i[valid_mask].detach().cpu())  # SU GPU
-                    labels_per_task[i].append(labels[valid_mask, i].detach().cpu())  # SU GPU
+                    preds_per_task[i].append(pred_i[valid_mask].detach())  # SU GPU
+                    labels_per_task[i].append(labels[valid_mask, i].detach())  # SU GPU
 
                 total_loss = total_loss + task_weight[i] * loss_i
 
@@ -568,20 +479,21 @@ def main():
         pin_memory=True,
         pin_memory_device="cuda",
         persistent_workers=True,
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
-    )
-
+        prefetch_factor=2,
+        drop_last=True
+)
+    
 
     val_loader = DataLoader(
         dataset=validation_set,
         batch_size=config.BATCH_SIZE,
         shuffle=False,
         num_workers=config.NUM_WORKERS,
-        pin_memory_device="cuda",
         pin_memory=True,
+        pin_memory_device="cuda",
+        persistent_workers=True,
+        prefetch_factor=2,
         drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
     )
 
     ################ Get the loss function #####################################################
@@ -639,14 +551,13 @@ def main():
     print(f"Validation batch {type(val_loader)} of size: {len(val_loader)}")
 
     print(f"\n\nLoss function:")
-    if config.TASK == -1:
-        for i, loss in enumerate(loss_fn):
-            if type(loss) is MaskedLoss:
-                print(f"  Task {i}: {type(loss.base_loss)} with ignore index {loss.ignore_index}")
-            else:
-                print(f"  Task {i}: {type(loss)}")
-    else:
-        print(f"  Task {config.TASK}: {type(loss_fn)}")
+    
+    for i, loss in enumerate(loss_fn):
+        if type(loss) is MaskedLoss:
+            print(f"  Task {i}: {type(loss.base_loss)} with ignore index {loss.ignore_index}")
+        else:
+            print(f"  Task {i}: {type(loss)}")
+    
 
     ########################## METRICS TRACKER #####################################################
     tracker = None
@@ -679,8 +590,6 @@ def main():
     best_val_loss = float("inf")
     epochs_without_improvement = 0
 
-    best_accuracy = 0.0
-
     ######################## START TRAINING LOOP ############################################
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
     train_fn = get_step_fn(config, mode="train")
@@ -688,7 +597,7 @@ def main():
 
     running_mean = None
     if config.TASK == -1:
-        running_mean = RunningMeans(['age', 'gender', 'emotion'], alpha=0.95)
+        running_mean = RunningMeans(['age', 'gender', 'emotion'], alpha=0.99)
     
     text_features = None
     if config.TUNING.lower() != 'softcpt':
@@ -718,62 +627,72 @@ def main():
         print(f"Text features shape: {text_features.shape}")
         print(f"Text features shapes per task: {[tf.shape for tf in all_text_features]}")
 
-    #task_weight = torch.tensor(config.TASK_WEIGHTS).to(DEVICE)
-    task_weight = training_set.get_task_weights()
-    print(f"Task weights: {task_weight}")
-    for epoch in range(config.EPOCHS):
+    task_weight = training_set.get_task_weights().to(DEVICE)
+    
 
-        print(f"\n[Epoch {epoch+1} - TRAIN]")
+
+    '''
+    val_loss, val_acc, all_preds_list, all_labels_list = val_fn(model, val_loader, loss_fn, DEVICE, task_weight, config, text_features)
+    
+
+    for t in range(num_tasks):
+        print(f"  Task '{task_names[t]}': Loss = {val_loss[t]:.4f}, Accuracy = {val_acc[t]:.4f}")
+    if num_tasks > 1:
+        print(f"  Total Loss: {val_loss[-1]:.4f}, Mean Accuracy : {sum(val_acc)/num_tasks:.4f}")
+'''
+    
+    for epoch in range(config.EPOCHS):
+        if running_mean is not None:
+            ema = [running_mean.get_by_index(i) or 1.0 for i in range(len(running_mean.task_names))]
+            inv_ema = [1.0 / max(e, 1e-8) for e in ema]
+            sum_inv_ema = sum(inv_ema)
+            task_weight = torch.tensor([w / sum_inv_ema for w in inv_ema], dtype=torch.float32, device=DEVICE)
+        else:
+            task_weight = training_set.get_task_weights().to(DEVICE)
 
         train_loss, train_acc = train_fn(model, train_loader, optimizer, running_mean, loss_fn, DEVICE, task_weight, config, text_features, scaler)
         
         if running_mean is not None:
             running_mean.plot(os.path.join(config.OUTPUT_DIR, "running_mean_train.png"))
         
+        print(f"\n[Epoch {epoch+1} - TRAIN]")
         for t in range(num_tasks):
             print(f"  Task '{task_names[t]}': Loss = {train_loss[t]:.4f}, Accuracy = {train_acc[t]:.4f}")
             tracker.update_loss(t, train_loss[t], train=True)
             tracker.update_accuracy(t, train_acc[t], train=True)
         if num_tasks > 1:
-            print(f"  Total Loss: {sum(train_loss[:-1]):.4f}, Total weighted loss {train_loss[-1]:.4f}, Mean Accuracy : {sum(train_acc)/num_tasks:.4f}")        
-            tracker.update_loss(None, sum(train_loss[:-1]), train=True, multitask=True)
+            print(f"  Total Loss: {train_loss[-1]:.4f}, Mean Accuracy : {sum(train_acc)/num_tasks:.4f}")        
+            tracker.update_loss(None, train_loss[-1], train=True, multitask=True)
         tracker.update_accuracy(None, sum(train_acc)/num_tasks, train=True, mean=True)        
 
         # Validation
-        print(f"\n[Epoch {epoch+1} - VAL]", flush=True)
         val_loss, val_acc, all_preds_list, all_labels_list = val_fn(model, val_loader, loss_fn, DEVICE, task_weight, config, text_features)
         
-        
+        print(f"\n[Epoch {epoch+1} - VAL]")
         for t in range(num_tasks):
             print(f"  Task '{task_names[t]}': Loss = {val_loss[t]:.4f}, Accuracy = {val_acc[t]:.4f}")
             tracker.update_loss(t, val_loss[t], train=False)
             tracker.update_accuracy(t, val_acc[t], train=False)
             tracker.update_confusion(t, all_preds_list[t], all_labels_list[t], epoch)
         if num_tasks > 1:
-            print(f"  Total raw Loss: {sum(val_loss[:-1]):.4f}, Total weighted loss {val_loss[-1]:.4f}, Mean Accuracy : {sum(val_acc)/num_tasks:.4f}")
-            tracker.update_loss(None, sum(val_loss[:-1]), train=False, multitask=True)
+            print(f"  Total Loss: {val_loss[-1]:.4f}, Mean Accuracy : {sum(val_acc)/num_tasks:.4f}")
+            tracker.update_loss(None, val_loss[-1], train=False, multitask=True)
             tracker.update_accuracy(None, sum(val_acc)/num_tasks, train=False, mean=True)
 
         tracker.save_confusion_matrices(epoch)
         tracker.plot_losses()
         tracker.save()
 
-        if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
-            if val_loss[-1] < best_val_loss:
-                print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
-                torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_model.pt"))
-            if sum(val_acc)/num_tasks > best_accuracy:
-                print(f"New best validation accuracy: {best_val_loss:.4f}. Saving model...")
-                torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_accuracy_model.pt"))
+        if val_loss[-1] < best_val_loss:
             best_val_loss = val_loss[-1]
-            best_accuracy = sum(val_acc)/num_tasks
             epochs_without_improvement = 0
-            
+            print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
             if config.TUNING.lower() == "softcpt":
                 model.save_text_features(
                 text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/best_soft_cpt_text_features.pt"),
                 normalize=True
-            )            
+            )
+            torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_model.pt"))
         else:
             epochs_without_improvement += 1
             print(f"No improvement in validation loss. Epochs without improvement: {epochs_without_improvement}/{patience}")

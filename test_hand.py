@@ -34,7 +34,10 @@ def get_prediction(age, gender, emotion):
     emotion_logit = emotion
 
     age_prob = torch.softmax(age_logit, dim=1)
-    age_pred = torch.round(torch.sum(age_prob * torch.arange(9, device=age_prob.device).unsqueeze(0), dim=1))
+    class_range = torch.arange(len(CLASSES[0]), device=age_prob.device).unsqueeze(0).float()
+    expected_value = torch.sum(age_prob * class_range, dim=1).float()
+    age_pred = torch.round(expected_value).long()
+
     gender_pred = torch.argmax(gender_logit, dim=1)
     emotion_pred = torch.argmax(emotion_logit, dim=1)
     return age_pred, gender_pred, emotion_pred
@@ -77,17 +80,60 @@ vpt_files = [
 
 model, device = load_model( text_features_path, vpt_files)
 
+model_ = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=0).to(device)
+TEXT_CLASSES_PROMPT= [
+        [
+            "A photo of a person between 0 and 2 years old",
+            "A photo of a person between 3 and 9 years old",
+            "A photo of a person between 10 and 19 years old",
+            "A photo of a person between 20 and 29 years old",
+            "A photo of a person between 30 and 39 years old",
+            "A photo of a person between 40 and 49 years old",
+            "A photo of a person between 50 and 59 years old",
+            "A photo of a person between 60 and 69 years old",
+            "A photo of a person with more than 70 years old"
+        ],
+        [
+            "A photo of a man",
+            "A photo of a woman"
+        ],
+        [
+            "A photo of a surprised person",
+            "A photo of a fearful person",
+            "A photo of a disgusted person",
+            "A photo of a happy person",
+            "A photo of a sad person",
+            "A photo of an angry person",
+            "A photo of a neutral person"
+        ]        
+    ]
+
+tokenizer = transforms.get_text_tokenizer(model_.text_model.context_length)
+        
+# Process text prompts by task to maintain task structure
+all_text_features = []
+for task_prompts in TEXT_CLASSES_PROMPT:
+    text = tokenizer(task_prompts).to('cuda')
+    task_text_features = model_.get_text_features(text=text, normalize=True)
+    all_text_features.append(task_text_features)
+text_features = torch.cat(all_text_features, dim=0)
+
+model.text_features = text_features
+print(f"Loaded text features into the model {text_features.shape}")
 
 test_dataset = MultiDataset(
-    dataset_names=["UTKFace", "RAF-DB"],#['LFW', 'MiviaGender', 'RAF-DB', 'UTKFace', "FairFace"],
+    dataset_names=["FairFace", "RAF-DB"],#['LFW', 'MiviaGender', 'RAF-DB', 'UTKFace', "FairFace"],
     transform=transforms.get_image_transform(224),
-    split="test",
+    split="val",
     datasets_root="/user/amolinario/processed_datasets/datasets_with_standard_labels/",
     all_datasets=False,
     verbose=True
 )
+test_dataset.get_class_weights(0)
+test_dataset.get_class_weights(1)
+test_dataset.get_class_weights(2)
 
-dataloader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2, pin_memory=True)
+dataloader = DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=2, pin_memory=True)
 
 os.makedirs("../TEST", exist_ok=True)
 
@@ -106,6 +152,7 @@ with torch.inference_mode():
         image = image.to(device)
         label = label.to(device)
         age, gender, emotion = model(image)
+
         age_pred, gender_pred, emotion_pred = get_prediction(age, gender, emotion)
 
         # Estrai i label come tensor
@@ -142,6 +189,10 @@ all_gender_preds = all_gender_preds.cpu().numpy()
 all_gender_labels = all_gender_labels.cpu().numpy()
 all_emotion_preds = all_emotion_preds.cpu().numpy()
 all_emotion_labels = all_emotion_labels.cpu().numpy()
+
+print(f"Age predictions: {all_age_preds.shape}, Age labels: {all_age_labels.shape}, Age counts: {np.bincount(all_age_labels)}")
+print(f"Gender predictions: {all_gender_preds.shape}, Gender labels: {all_gender_labels.shape}, Gender counts: {np.bincount(all_gender_labels)}")
+print(f"Emotion predictions: {all_emotion_preds.shape}, Emotion labels: {all_emotion_labels.shape}, Emotion counts: {np.bincount(all_emotion_labels)}")
 
 # Calcola e salva le confusion matrix (come array .npy)
 age_cm = confusion_matrix(all_age_labels, all_age_preds, labels=range(9))

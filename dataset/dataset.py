@@ -666,28 +666,15 @@ if __name__ == "__main__":
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    print("\n" + "="*80)
-    print("Testing BaseDataset")
-    
-    base_dataset = BaseDataset(
-        root="../processed_datasets/datasets_with_standard_labels/VggFace2",
-        transform=test_transforms,
-        split="train",
-        verbose=True,
-        limit_fraction=0.0,
-        subset_seed=2025
-    )
-
-    base_dataset.get_class_weights(0)
-    exit(0)
     try:
         print("\n" + "="*60)
         print("=== TESTING BaseDataset ===")
         print("="*60)
 
         base_datasets = []
+        datasets_root = "../processed_datasets/datasets_with_standard_labels"
+
         try:
-            datasets_root = "../datasets_with_standard_labels"
             if os.path.exists(datasets_root):
                 dataset_dirs = [d for d in os.listdir(datasets_root) if os.path.isdir(os.path.join(datasets_root, d))]
                 if dataset_dirs:
@@ -737,7 +724,7 @@ if __name__ == "__main__":
                 dataset_names=["test_dataset"],
                 transform=test_transforms,
                 split="train",
-                datasets_root="../datasets_with_standard_labels",
+                datasets_root=datasets_root,
                 all_datasets=True,
                 verbose=True
             )
@@ -773,7 +760,7 @@ if __name__ == "__main__":
             dataset_names=["test_dataset"],
             transform=test_transforms,
             split="train",
-            datasets_root="../datasets_with_standard_labels",
+            datasets_root=datasets_root,
             verbose=True,
             all_datasets=True,
             balance_task={EMOTION_IDX: 0.25}

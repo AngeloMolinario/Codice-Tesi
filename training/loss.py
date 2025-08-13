@@ -1,47 +1,61 @@
 import torch
 from torch import nn
 
-class OrdinalLoss():
-    def __init__(self, num_classes, ordinal_loss='mae', weights=None):
+import math
+import torch
+import torch.nn as nn
+
+class OrdinalLoss(nn.Module):
+    def __init__(self, num_classes, ordinal_loss='mae', weights=None, alpha=0.05):
+        super().__init__()
         self.num_classes = num_classes
-        self.ordinal_loss = nn.L1Loss(reduction='none') if ordinal_loss == 'mae' else nn.MSELoss(reduction='none')
-        self.classes_range = torch.arange(num_classes).unsqueeze(0).float()
-        device='cuda' if torch.cuda.is_available() else 'cpu'
+        self.alpha = alpha
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.classes_range = torch.arange(num_classes).unsqueeze(0).float().to(device)  # [K]
+
         if weights is not None:
-            self.class_weights = weights
+            self.class_weights = weights.float().to(device)
         else:
-            self.class_weights = torch.ones(num_classes)
+            self.class_weights = torch.ones(num_classes).to(device)
 
-        self.class_weights = self.class_weights.to(device)
-        self.classes_range = self.classes_range.to(device)
+        self.ce = nn.CrossEntropyLoss(weight=self.class_weights)
 
-    def __call__(self, logit, true_labels, return_predicted_label=False):
-        probabilities = torch.softmax(logit, dim=1)
-        expected_value = torch.sum(probabilities * self.classes_range, dim=1).float()
-        predicted_label = torch.round(expected_value).long()
+    def forward(self, logit, true_labels, return_predicted_label=False):
+        K = self.num_classes
+        probs = torch.softmax(logit, dim=1)                  # [B,K]
 
-        # Calcola la perdita per esempio
-        losses = self.ordinal_loss(expected_value, true_labels.float())
+        # CE normalizzata
+        ce_loss = self.ce(logit, true_labels) / math.log(K)
 
-        # Applica il bilanciamento ponderando la perdita
-        weighted_losses = losses * self.class_weights[true_labels.long()]
+        # Expected Absolute Error (EAE) normalizzata
+        # dist[k] = |k - y|  -> shape [B,K]
+        dist = (self.classes_range - true_labels.unsqueeze(1).float()).abs()
+        eae = (probs * dist).sum(dim=1) / (K - 1)            # [B] in [0,1]
 
-        # Calcola la media ponderata
-        loss = weighted_losses.mean()
+        # Pesi per classe anche sulla parte ordinale (opzionale)
+        eae = eae * self.class_weights[true_labels]
+        ord_loss = eae.mean()
 
+        loss = ce_loss + self.alpha * ord_loss
+        #print(f"Ordinal loss: {ord_loss.item():.4f} - CE_loss : {ce_loss.item():.4f} - Total loss: {loss.item():.4f}")        
         if return_predicted_label:
-            return loss, predicted_label
+            ev = (probs * self.classes_range).sum(dim=1)
+            pred = torch.clamp(torch.round(ev), 0, K-1).long()
+            return loss, torch.argmax(probs, dim=1)
         return loss
+
 
 class CrossEntropyLoss():
     def __init__(self, weights=None):
-        self.ce = nn.CrossEntropyLoss(weight=weights)
+        self.ce = nn.CrossEntropyLoss(weight=weights)        
         self.softmax = nn.Softmax(dim=1)
+        self.class_weights = weights
+        self.factor = math.log(len(weights)) if weights is not None else 1.0
 
     def __call__(self, logit, true_labels, return_predicted_label=False):
-        loss = self.ce(logit, true_labels)
+        loss = self.ce(logit, true_labels) / self.factor
 
-
+    
         if return_predicted_label:
             probabilities = self.softmax(logit)
             predicted_label = torch.argmax(probabilities, dim=1)

@@ -1,10 +1,10 @@
 {
-    "TUNING" : "vpt",
+    "TUNING" : "softcpt",
     "MODEL"  : "PECore",
-    "TASK"   : 2,
+    "TASK"   : -1,
 
-    "NUM_VISUAL_PROMPT" : 2,
-    "NUM_TEXT_CNTX" : 0,
+    "NUM_VISUAL_PROMPT" : 0,
+    "NUM_TEXT_CNTX" : 16,
     "TASK_NAMES": ["age estimation", "gender recognition", "emotion classification"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
@@ -44,20 +44,19 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["VggFace2"],
+        "-1" : ["FairFace", "RAF-DB"],
         "0"  : ["FairFace"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 64,
-    "NUM_WORKERS" : 2,
-    "PREFETCH_FACTOR" : 2,
+    "BATCH_SIZE" : 512,
+    "NUM_WORKERS" : 4,
     "LR" : 1e-4,
-    "OUTPUT_DIR" : "../TRAIN_EMOTION/2p_lr4",
+    "OUTPUT_DIR" : "../TRAIN_unc/EXP2_only_2_soft_newal",
     "VERBOSE": true,
     "USE_TQDM":true,
-    "EPOCHS" : 10,    
-    "TASK_WEIGHTS" : [1.0, 1.0, 1.0]
+    "EPOCHS" : 10,
+    "TASK_WEIGHTS" : [1.715, 0.490, 0.795]
 }

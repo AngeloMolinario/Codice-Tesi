@@ -222,26 +222,54 @@ class PECore_Vision(nn.Module):
     def forward(self, image: Optional[torch.Tensor] = None):
         if self.text_features.numel() == 0:
             raise RuntimeError("Text features non caricate!")
-        logits_list = []
-        
-        if len(self.vpt_list) <= 1:
-            if self.num_prompt > 0:
-                self.visual.prompt_learner = self.vpt_list[0] 
-            image_features = self.get_image_features(image, normalize=True)
-            logit = self.logit_scale.exp() * (image_features @ self.text_features.T)
-            return torch.split(logit, self.num_classes, dim=1)
+        if image is None:
+            raise ValueError("image non può essere None")
 
-        text_ = torch.split(self.text_features, self.num_classes, dim=0)
+        # Assumi text_features già L2-normalizzate; in caso contrario:
+        # self.text_features = F.normalize(self.text_features, dim=-1)
 
+        scale = self.logit_scale.exp()
+        # split fisso in (age=9, gender=2, emotion=7) nell'ordine richiesto
+        age_c, gender_c, emotion_c = self.num_classes
+        text_age, text_gender, text_emotion = torch.split(self.text_features, (age_c, gender_c, emotion_c), dim=0)
 
-        for i, vpt in enumerate(self.vpt_list):
-            # Assegna il prompt_learner temporaneamente
-            self.visual.prompt_learner = vpt
-            image_features = self.get_image_features(image, normalize=True)
-            logit = self.logit_scale.exp() * (image_features @ text_[i].T)
-            logits_list.append(logit)
+        # ----- Caso NO VPT (num_prompt == 0): un solo pass + split -----
+        if self.num_prompt <= 0:
+            image_features = self.get_image_features(image, normalize=True)          # (B, D)
+            logits_full   = scale * (image_features @ self.text_features.T)          # (B, 18)
+            logits_age, logits_gender, logits_emotion = torch.split(logits_full, (age_c, gender_c, emotion_c), dim=1)
+            return logits_age, logits_gender, logits_emotion
 
-        return logits_list
+        # ----- Caso VPT -----
+        if len(self.vpt_list) == 1:
+            # Un solo VisionPromptLearner
+            self.visual.prompt_learner = self.vpt_list[0]
+            image_features = self.get_image_features(image, normalize=True)          # (B, D)
+            logits_full   = scale * (image_features @ self.text_features.T)          # (B, 18)
+            logits_age, logits_gender, logits_emotion = torch.split(logits_full, (age_c, gender_c, emotion_c), dim=1)
+            return logits_age, logits_gender, logits_emotion
+        else:
+            # Più VPT: 3 forward nell'ordine age, gender, emotion
+            # (se vuoi essere rigido, sblocca l'assert qui sotto)
+            # assert len(self.vpt_list) >= 3, "Con VPT multipli servono almeno 3 prompt learner (age, gender, emotion)."
+
+            # AGE
+            self.visual.prompt_learner = self.vpt_list[0]
+            img_feat_age  = self.get_image_features(image, normalize=True)           # (B, D)
+            logits_age    = scale * (img_feat_age @ text_age.T)                      # (B, 9)
+
+            # GENDER
+            self.visual.prompt_learner = self.vpt_list[1]
+            img_feat_gender = self.get_image_features(image, normalize=True)         # (B, D)
+            logits_gender   = scale * (img_feat_gender @ text_gender.T)              # (B, 2)
+
+            # EMOTION
+            self.visual.prompt_learner = self.vpt_list[2]
+            img_feat_emotion = self.get_image_features(image, normalize=True)        # (B, D)
+            logits_emotion   = scale * (img_feat_emotion @ text_emotion.T)           # (B, 7)
+
+            return logits_age, logits_gender, logits_emotion
+
     
 
     def load_pretrained_vision_encoder(self, name: str = "PE-Core-B16-224", checkpoint_path: str = None):
