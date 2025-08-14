@@ -9,7 +9,8 @@ class VisionPromptLearner(nn.Module):
         super().__init__()
         self.num_prompt = num_prompt
         self.emb_size = emb_size
-        self.prompt_tokens = nn.Parameter(torch.randn(num_prompt, emb_size))
+        self.prompt_tokens = nn.Parameter(torch.zeros(num_prompt, emb_size))
+        torch.nn.init.normal_(self.prompt_tokens, std=0.02)  # Initialize with normal distribution
         self.is_cls_present = is_cls_present
 
     def forward(self, x):

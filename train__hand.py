@@ -143,8 +143,7 @@ def get_augmentation_transform(config):
     tform = [
         T.Resize((224,224)),
         T.RandomHorizontalFlip(p=0.5),
-        T.RandomVerticalFlip(p=0.2),
-        T.ColorJitter(brightness=0.4, contrast=0.3, saturation=0.2),
+        T.ColorJitter(brightness=0.2, contrast=0.3, saturation=0.2),
         T.ToTensor()
     ]
 
@@ -721,6 +720,39 @@ def main():
     #task_weight = torch.tensor(config.TASK_WEIGHTS).to(DEVICE)
     task_weight = training_set.get_task_weights()
     print(f"Task weights: {task_weight}")
+
+
+
+    print(f"\n[Epoch 0 - VAL]", flush=True)
+    val_loss, val_acc, all_preds_list, all_labels_list = val_fn(model, val_loader, loss_fn, DEVICE, task_weight, config, text_features)
+    
+    
+    for t in range(num_tasks):
+        print(f"  Task '{task_names[t]}': Loss = {val_loss[t]:.4f}, Accuracy = {val_acc[t]:.4f}")
+        tracker.update_confusion(t, all_preds_list[t], all_labels_list[t], 100)
+    if num_tasks > 1:
+        print(f"  Total raw Loss: {sum(val_loss[:-1]):.4f}, Total weighted loss {val_loss[-1]:.4f}, Mean Accuracy : {sum(val_acc)/num_tasks:.4f}")
+        tracker.update_accuracy(None, sum(val_acc)/num_tasks, train=False, mean=True)
+
+    tracker.save_confusion_matrices(100)
+    if config.TASK == -1:        
+        tracker = MultitaskTracker(
+            num_tasks=num_tasks,
+            output_dir=output_dir,
+            task_names=task_names,
+            class_names=class_names
+        )
+        print(f"Tracking metrics for multitask: {task_names}")
+    else:
+        tracker = MultitaskTracker(
+            num_tasks=1,
+            output_dir=output_dir,
+            task_names=task_names,
+            class_names=[class_names[config.TASK]]
+        )
+        print(f"Tracking metrics for task {task_names[0]}")
+
+
     for epoch in range(config.EPOCHS):
 
         print(f"\n[Epoch {epoch+1} - TRAIN]")
@@ -760,13 +792,15 @@ def main():
 
         if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
             if val_loss[-1] < best_val_loss:
+                best_val_loss = val_loss[-1]
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
                 torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_model.pt"))
             if sum(val_acc)/num_tasks > best_accuracy:
-                print(f"New best validation accuracy: {best_val_loss:.4f}. Saving model...")
+                best_accuracy = sum(val_acc)/num_tasks
+                print(f"New best validation accuracy: {best_accuracy:.4f}. Saving model...")
                 torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_accuracy_model.pt"))
-            best_val_loss = val_loss[-1]
-            best_accuracy = sum(val_acc)/num_tasks
+           
+            
             epochs_without_improvement = 0
             
             if config.TUNING.lower() == "softcpt":
