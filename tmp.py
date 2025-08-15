@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import ConfusionMatrixDisplay
 import seaborn as sns
 from collections import defaultdict
-
+import sys
 # ---------------------------------------------------------
 # Funzione di analisi con i 4 grafici richiesti
 # ---------------------------------------------------------
@@ -185,10 +185,10 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
 # ---------------------------------------------------------
 # Configurazione e caricamento modello
 # ---------------------------------------------------------
-config = Config("/user/amolinario/Codice-Tesi/config/test.json")
+config = Config(sys.argv[1])
 
 output_dir = config.OUTPUT_DIR
-final_dir = "../TEST_SCPT10_age/t2"
+final_dir = "../TEST_VPT/OL3"
 
 vision_ckpt = os.path.join(output_dir, "ckpt", "best_accuracy_model.pt")
 
@@ -204,7 +204,7 @@ if config.TUNING.lower() == 'softcpt':
     ).to("cuda")
 else:
     print("Inizializzazione del modello VPT")
-    model_ = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=10).to("cuda")
+    model_ = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT).to("cuda")
 
 checkpoint = torch.load(vision_ckpt, map_location="cuda")
 missing, unexpected = model_.load_state_dict(checkpoint, strict=False)
@@ -235,7 +235,7 @@ test_dataset = MultiDataset(
     transform=transforms.get_image_transform(224),
     split="test",
     datasets_root="/user/amolinario/processed_datasets/datasets_with_standard_labels/",
-    all_datasets=False,
+    all_datasets=False, 
     verbose=True
 )
 test_dataset.get_class_weights(0)

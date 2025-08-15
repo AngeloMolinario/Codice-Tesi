@@ -5,7 +5,7 @@ import math
 import torch
 import torch.nn as nn
 
-class OrdinalLoss(nn.Module):
+class OrdinalLoss_3(nn.Module):
     def __init__(self, num_classes=9, alpha=0.1, max_dataset_age=108.0, weights=None, 
                  rare_classes=None, rare_class_min_weight=8.0,
                  central_classes=None, central_weight_multiplier=1.3):
@@ -104,7 +104,7 @@ class OrdinalLoss(nn.Module):
         
         return loss
 
-class OrdinalLoss_l2(nn.Module):
+class OrdinalLoss(nn.Module):
     def __init__(self, num_classes=9, alpha=0.1, max_dataset_age=108.0, weights=None, 
                  rare_classes=None, rare_class_min_weight=8.0):
         """

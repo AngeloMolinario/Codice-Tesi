@@ -1,7 +1,7 @@
 {
     "TUNING" : "vpt",
     "MODEL"  : "PECore",
-    "TASK"   : -1,
+    "TASK"   : 2,
 
     "NUM_VISUAL_PROMPT" : 30,
     "NUM_TEXT_CNTX" : 0,
@@ -55,9 +55,9 @@
     "NUM_WORKERS" : 2,
     "PREFETCH_FACTOR" : 5,
     "LR" : 1e-4,
-    "OUTPUT_DIR" : "../TRAIN_MTK/vpt_ol3",
+    "OUTPUT_DIR" : "../TRAIN_EMOTION/vpt_std_norm",
     "VERBOSE": true,
-    "USE_TQDM":false,
+    "USE_TQDM":true,
     "EPOCHS" : 5,    
     "TASK_WEIGHTS" : [1.0, 1.0, 1.0]
 }
