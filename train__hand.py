@@ -755,7 +755,7 @@ def main():
 
     for epoch in range(config.EPOCHS):
 
-        print(f"\n[Epoch {epoch+1} - TRAIN]")
+        print(f"\n[Epoch {epoch+1} - TRAIN]", flush=True)
 
         train_loss, train_acc = train_fn(model, train_loader, optimizer, running_mean, loss_fn, DEVICE, task_weight, config, text_features, scaler)
         
@@ -788,7 +788,7 @@ def main():
 
         tracker.save_confusion_matrices(epoch)
         tracker.plot_losses()
-        tracker.save()
+        tracker.save()        
 
         if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
             if val_loss[-1] < best_val_loss:

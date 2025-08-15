@@ -105,7 +105,7 @@ class OrdinalLoss_3(nn.Module):
         return loss
 
 class OrdinalLoss(nn.Module):
-    def __init__(self, num_classes=9, alpha=0.1, max_dataset_age=108.0, weights=None, 
+    def __init__(self, num_classes=9, alpha=0.05, max_dataset_age=108.0, weights=None, 
                  rare_classes=None, rare_class_min_weight=8.0):
         """
         num_classes: Numero di gruppi d'età (default=9)
@@ -204,7 +204,7 @@ class OrdinalLoss(nn.Module):
         # Restituisce ESATTAMENTE come nella tua implementazione
         if return_predicted_label:
             pred = torch.argmax(logit, dim=1)
-            return loss, pred
+            return eae_loss, predicted_ages
         
         return loss
 
