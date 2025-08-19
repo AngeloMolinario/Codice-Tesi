@@ -26,7 +26,7 @@ class OrdinalPeakedCELoss(nn.Module):
                  w_far=1.0,      delta_far=0.15,
                  w_lpeak=1.0,    prob_margin=0.2,
                  w_emd=1.0,
-                 ce_weight=1.0,
+                 ce_weight=0.0,
                  eps=1e-8):
         super().__init__()
         self.num_classes = int(num_classes)
