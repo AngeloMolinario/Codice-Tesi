@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as T
 import matplotlib.pyplot as plt
 from torchvision import transforms as T
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import os
@@ -174,7 +174,7 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
         if compute_text_features:
             text_features = model.get_text_features(normalize=True).T.contiguous()        
 
-        with autocast():
+        with autocast("cuda"):
             with torch.set_grad_enabled(config.NUM_VISUAL_PROMPT!=0):
                 image_features = model.get_image_features(image, normalize=True)
 
@@ -209,7 +209,7 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
 
         losses_sums[-1] += total_loss.detach()
         if not config.USE_TQDM and (num_batch + 1)%100 == 0:
-                print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r')
+                print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r', flush=True)
 
     # Compute the average losses and accuracy
     accuracies = [(correct[i] / count[i]).item() if count[i] > 0 else float('nan')
@@ -220,7 +220,6 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
     return mean_loss, accuracies
 
 def analyze_age_errors(all_preds_list, all_labels_list, all_probs_list, class_names, task_names, accuracies, output_dir):
-
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -246,6 +245,24 @@ def analyze_age_errors(all_preds_list, all_labels_list, all_probs_list, class_na
             plt.title(f"Distribuzione di probabilità normalizzata - {class_names[c]}")
             plt.tight_layout()
             plt.savefig(os.path.join(prob_dir, f"class_{c}_{class_names[c]}.png"))
+            plt.close()
+
+    # 1b - Distribuzione dell'argmax per ogni classe reale
+    argmax_dir = os.path.join(output_dir, "Argmax_distribution_per_class")
+    os.makedirs(argmax_dir, exist_ok=True)
+    for c in range(num_classes):
+        mask = labels == c
+        if mask.sum() > 0:
+            pred_counts = np.bincount(preds[mask], minlength=num_classes)
+            norm_pred_counts = pred_counts / pred_counts.sum()
+            plt.figure(figsize=(8, 5))
+            plt.bar(class_names, norm_pred_counts)
+            plt.xticks(rotation=45)
+            plt.xlabel("Classi Predette (Argmax)")
+            plt.ylabel("Frazione di campioni")
+            plt.title(f"Distribuzione argmax predetto - {class_names[c]}")
+            plt.tight_layout()
+            plt.savefig(os.path.join(argmax_dir, f"class_{c}_{class_names[c]}.png"))
             plt.close()
 
     # 2 - Accuracy per singolo task
@@ -328,8 +345,7 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
                 text_features = model.get_text_features(normalize=True)
 
             # --- abilita autocast per mixed precision ---
-            from torch.cuda.amp import autocast
-            with autocast():
+            with autocast("cuda"):
                 image_features = model.get_image_features(image, normalize=True)
                 logits = model.logit_scale.exp() * (image_features @ text_features.T)
                 logits_by_task = torch.split(logits, logit_split, dim=1)
@@ -351,7 +367,7 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
                 losses_sums[-1] += total_loss.detach()
 
             if not config.USE_TQDM and (num_batch + 1) % 100 == 0:
-                print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r')
+                print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r', flush=True)
 
     accuracies = []
     all_preds_list, all_labels_list, all_probs_list = [], [], []
@@ -452,6 +468,7 @@ def main():
         shuffle=False,
         num_workers=config.NUM_WORKERS,
         pin_memory_device="cuda",
+        persistent_workers=True,
         pin_memory=True,
         drop_last=True,
         prefetch_factor=config.PREFETCH_FACTOR
@@ -478,7 +495,7 @@ def main():
     optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=0.0)
 
     # Add GradScaler for mixed precision
-    scaler = GradScaler()
+    scaler = GradScaler("cuda")
 
     # Add CosineAnnealingLR scheduler
     scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
