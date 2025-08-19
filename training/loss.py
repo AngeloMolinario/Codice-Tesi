@@ -23,10 +23,10 @@ class OrdinalPeakedCELoss(nn.Module):
     """
     def __init__(self, num_classes, weights=None, widths=[3, 7, 10, 10, 10, 10, 10, 10, 25],
                  alpha=1.0,
-                 w_far=1.0,      delta_far=0.01,
-                 w_lpeak=4.0,    prob_margin=0.2,
-                 w_emd=3.5,
-                 ce_weight=0.5,
+                 w_far=0.2,      delta_far=0.01,
+                 w_lpeak=1.0,    prob_margin=0.4,
+                 w_emd=1.0,
+                 ce_weight=0.0,
                  eps=1e-8):
         super().__init__()
         self.num_classes = int(num_classes)

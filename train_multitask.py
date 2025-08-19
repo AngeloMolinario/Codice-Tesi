@@ -174,7 +174,7 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
         if compute_text_features:
             text_features = model.get_text_features(normalize=True).T.contiguous()        
 
-        with autocast("cuda"):
+        with autocast():
             with torch.set_grad_enabled(config.NUM_VISUAL_PROMPT!=0):
                 image_features = model.get_image_features(image, normalize=True)
 
@@ -345,7 +345,7 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
                 text_features = model.get_text_features(normalize=True)
 
             # --- abilita autocast per mixed precision ---
-            with autocast("cuda"):
+            with autocast():
                 image_features = model.get_image_features(image, normalize=True)
                 logits = model.logit_scale.exp() * (image_features @ text_features.T)
                 logits_by_task = torch.split(logits, logit_split, dim=1)
@@ -495,7 +495,7 @@ def main():
     optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=0.0)
 
     # Add GradScaler for mixed precision
-    scaler = GradScaler("cuda")
+    scaler = GradScaler()
 
     # Add CosineAnnealingLR scheduler
     scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)

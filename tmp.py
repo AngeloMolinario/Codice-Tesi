@@ -244,7 +244,7 @@ test_dataset = MultiDataset(
     transform=transforms.get_image_transform(224),
     split="test",
     datasets_root="/user/amolinario/processed_datasets/datasets_with_standard_labels/",
-    all_datasets=False, 
+    all_datasets=True, 
     verbose=True
 )
 test_dataset.get_class_weights(0)
