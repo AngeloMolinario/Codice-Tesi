@@ -681,5 +681,5 @@ def main():
         plt.tight_layout()
         plt.savefig(os.path.join(config.OUTPUT_DIR, 'task_weights_per_epoch.png'))
         plt.close()
-
-main()
+if __name__ == "__main__":
+    main()

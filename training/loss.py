@@ -52,11 +52,6 @@ class OrdinalPeakedCELoss(nn.Module):
         d_idx = (j - i).abs()                        # [K,K] ∈ {0,1,2,...}
         self.register_buffer("dist_idx", d_idx)
 
-        # pesi tail iniziali: (|d|-1)^p per |d|>1
-        tail_w = torch.zeros_like(d_idx)
-        tail_w[d_idx > 1] = (d_idx[d_idx > 1] - 1.0) ** self.tail_power
-        self.register_buffer("tail_weights", tail_w)  # [K,K]
-
         # CDF target per EMD^2
         self.register_buffer("cdf_true_table", torch.tril(torch.ones(K, K, device=device)))
 
