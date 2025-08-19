@@ -670,10 +670,10 @@ def main():
         plt.savefig(os.path.join(config.OUTPUT_DIR, "learning_rate_plot.png"))
         plt.close()
 
-        weights_history = np.array(weights_history)
+        _weights_history = np.array(weights_history)
         plt.figure(figsize=(8,4))
         for i, name in enumerate(task_names):
-            plt.plot(weights_history[:,i], label=name)
+            plt.plot(_weights_history[:,i], label=name)
         plt.xlabel('Epoch')
         plt.ylabel('Task Weight (EMA inverse)')
         plt.title('Task Weights per Epoch')
