@@ -44,20 +44,20 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB"],
+        "-1" : [],
         "0"  : ["FairFace"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 100,
-    "NUM_WORKERS" : 4,
-    "LR" : 1e-5,
-    "OUTPUT_DIR" : "../TRAIN_norm",
-    "PREFETCH_FACTOR" : 2,
+    "BATCH_SIZE" : 128,
+    "NUM_WORKERS" : 2,
+    "LR" : 2e-4,    
+    "OUTPUT_DIR" : "../TRAIN_MTK/soft_long",
+    "PREFETCH_FACTOR" : 4,
     "VERBOSE": true,
-    "USE_TQDM":true,
-    "EPOCHS" : 10,
+    "USE_TQDM":false,
+    "EPOCHS" : 20,
     "TASK_WEIGHTS" : [1.715, 0.490, 0.795]
 }

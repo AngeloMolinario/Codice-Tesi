@@ -1,212 +1,346 @@
 import torch
 from torch import nn
-
+from torch.nn import functional as F
 import math
 import torch
 import torch.nn as nn
 
-class OrdinalLoss_3(nn.Module):
-    def __init__(self, num_classes=9, alpha=0.1, max_dataset_age=108.0, weights=None, 
-                 rare_classes=None, rare_class_min_weight=8.0,
-                 central_classes=None, central_weight_multiplier=1.3):
-        """
-        num_classes: Numero di gruppi d'età (default=9)
-        alpha: Peso per componente ordinale (0.1 ora accettabile grazie al bilanciamento)
-        max_dataset_age: Età massima presente nel dataset (108.0)
-        weights: Pesi per gestire sbilanciamento dataset (opzionale)
-        rare_classes: Indici delle classi rare (es. [0, 8] per "0-2" e "70+")
-        rare_class_min_weight: Peso minimo garantito per classi rare
-        central_classes: Indici delle classi centrali da pesare di più (es. [3,4,5,6])
-        central_weight_multiplier: Moltiplicatore per aumentare il peso delle classi centrali
-        """
+
+class OrdinalPeakedCELoss(nn.Module):
+    """
+    Loss = CE_norm
+         + alpha * [ w_far   * FarProbMargin
+                     w_tail  * TailWeighted
+                     w_lpeak * LocalPeak
+                     w_emd   * EMD^2 ]
+
+    - CE_norm           : massimizza l'accuracy
+    - FarProbMargin     : vieta errori lontani (|k-y|>1) in probabilità
+    - TailWeighted      : localizza la massa fuori ±1 con peso crescente
+    - LocalPeak         : gap p[y] ≥ max(p[y±1]) + margin
+    - EMD^2 (CDF)       : ordinalità globale
+    - widths (opz.)     : pesi per EMD^2 quando i bin hanno ampiezze diverse
+    """
+    def __init__(self, num_classes, weights=None, widths=[3, 7, 10, 10, 10, 10, 10, 10, 25],
+                 alpha=0.4,
+                 w_far=7.0,      delta_far=0.15,
+                 w_tail=9.0,     tail_power=3,
+                 w_lpeak=12.0,    prob_margin=0.35,
+                 w_emd=1.2,
+                 ce_weight=1.0,
+                 eps=1e-8):
         super().__init__()
-        self.num_classes = num_classes
-        self.alpha = alpha
-        self.max_dataset_age = max_dataset_age
+        self.num_classes = int(num_classes)
+        self.alpha = float(alpha)
+        self.w_far = float(w_far)
+        self.delta_far = float(delta_far)
+        self.w_tail = float(w_tail)
+        self.tail_power = int(tail_power)
+        self.w_lpeak = float(w_lpeak)
+        self.prob_margin = float(prob_margin)
+        self.w_emd = float(w_emd)
+        self.ce_weight = float(ce_weight)
+        self.eps = float(eps)
+
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        
-        # 1. CENTRI AGGIORNATI con età massima 108 anni
-        self.age_centers = torch.tensor([
-            1.0,    # 0-2
-            6.0,    # 3-9
-            14.5,   # 10-19
-            24.5,   # 20-29
-            34.5,   # 30-39
-            44.5,   # 40-49
-            54.5,   # 50-59
-            64.5,   # 60-69
-            89.0    # 70-108
-        ]).float().to(device)
-        
-        # 2. Massima differenza in anni
-        self.max_age_diff = self.age_centers[-1] - self.age_centers[0]  # 88.0 anni
-        
-        # 3. Dimensioni reali dei bin
-        bin_sizes = torch.tensor([
-            3.0, 7.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 38.0
-        ]).float().to(device)
-        
-        # 4. Pesi per lo sbilanciamento dei BIN
-        bin_weights = 1.0 / bin_sizes
-        bin_weights = bin_weights / bin_weights.sum() * num_classes
-        
-        # 5. GESTIONE CLASSI RARE
-        self.rare_classes = rare_classes if rare_classes is not None else [0, 8]
-        
-        # 6. COMBINA con pesi per lo sbilanciamento del DATASET
-        if weights is not None:
-            assert len(weights) == num_classes, f"weights deve avere lunghezza {num_classes}"
-            dataset_weights = weights.float().to(device)
-            combined_weights = bin_weights * dataset_weights
+        K = self.num_classes
+        assert K >= 3, "Servono almeno 3 classi."
+
+        # costanti
+        self.register_buffer("inv_logK", torch.tensor(1.0 / math.log(K), device=device))
+
+        # distanze intere |j-i|
+        classes = torch.arange(K, dtype=torch.float32, device=device)
+        i = classes.view(K, 1); j = classes.view(1, K)
+        d_idx = (j - i).abs()                        # [K,K] ∈ {0,1,2,...}
+        self.register_buffer("dist_idx", d_idx)
+
+        # pesi tail iniziali: (|d|-1)^p per |d|>1
+        tail_w = torch.zeros_like(d_idx)
+        tail_w[d_idx > 1] = (d_idx[d_idx > 1] - 1.0) ** self.tail_power
+        self.register_buffer("tail_weights", tail_w)  # [K,K]
+
+        # CDF target per EMD^2
+        self.register_buffer("cdf_true_table", torch.tril(torch.ones(K, K, device=device)))
+
+        # pesi per EMD^2 (bin non uniformi)
+        if widths is not None:
+            widths = torch.tensor(widths, device=device, dtype=torch.float32)
+            widths = widths.to(device=device, dtype=torch.float32)
+            w = widths.to(device=device, dtype=torch.float32)
+            if w.numel() != K:
+                raise ValueError(f"'widths' deve avere lunghezza {K}, got {w.numel()}")
+            cdf_w = w / w.sum()
         else:
-            combined_weights = bin_weights.clone()
+            cdf_w = torch.full((K,), 1.0 / K, device=device)
+        self.register_buffer("cdf_weights", cdf_w)    # [K]
 
-        # 7. APPLICA MIN_WEIGHT per classi rare
-        for cls_idx in self.rare_classes:
-            combined_weights[cls_idx] = max(combined_weights[cls_idx], rare_class_min_weight)
+        # pesi di classe per CE
+        if weights is not None:
+            cw = weights.to(device=device, dtype=torch.float32)
+            if cw.numel() != K:
+                raise ValueError(f"'weights' deve avere lunghezza {K}, got {cw.numel()}")
+            self.register_buffer("class_weights", cw)
+        else:
+            self.register_buffer("class_weights", torch.ones(K, device=device))
 
-        # 8. APPLICA PESO AGGIUNTIVO PER CLASSI CENTRALI
-        self.central_classes = central_classes if central_classes is not None else [3, 4, 5, 6]  # 20-29 a 50-59
-        self.central_weight_multiplier = central_weight_multiplier
-        
-        for cls_idx in self.central_classes:
-            if cls_idx not in self.rare_classes:  # Evita di sovrappesare classi già pesanti
-                combined_weights[cls_idx] = combined_weights[cls_idx] * central_weight_multiplier
+        self.ce = nn.CrossEntropyLoss(weight=self.class_weights, reduction='none')
 
-        # 9. Normalizza (media=1 come in CrossEntropyLoss)
-        self.class_weights = combined_weights / combined_weights.mean()
-        
-        # 10. Inizializza CE con pesi combinati
-        self.ce = nn.CrossEntropyLoss(weight=self.class_weights)
+    def set_weights(self, **kwargs):
+        """
+        Aggiorna pesi/margini a runtime (es: prob_margin=0.3, w_tail=8, ...).
+        Se cambia 'tail_power', ricostruisce i pesi della tail.
+        """
+        device = self.cdf_weights.device
+        K = self.num_classes
+        tail_power_changed = False
+        for k, v in kwargs.items():
+            if hasattr(self, k):
+                if k == "tail_power":
+                    tail_power_changed = True
+                    v = int(v)
+                setattr(self, k, float(v) if isinstance(v, (int, float)) and k != "tail_power" else v)
+        if tail_power_changed:
+            # ricostruisci tail_weights con il nuovo tail_power
+            classes = torch.arange(K, dtype=torch.float32, device=device)
+            i = classes.view(K, 1); j = classes.view(1, K)
+            d_idx = (j - i).abs()
+            tail_w = torch.zeros_like(d_idx)
+            mask = d_idx > 1
+            tail_w[mask] = (d_idx[mask] - 1.0) ** int(self.tail_power)
+            self.tail_weights = tail_w
 
-    def forward(self, logit, true_labels, return_predicted_label=False):
-        # 1. Cross-Entropy NORMALIZZATA
-        ce_loss = self.ce(logit, true_labels) / math.log(self.num_classes)
-        
-        # 2. Calcola età predetta
-        probs = torch.softmax(logit, dim=1)
-        predicted_ages = probs @ self.age_centers  # [B]
-        
-        # 3. Età vera
-        true_ages = self.age_centers[true_labels]  # [B]
-        
-        # 4. Calcola EAE normalizzato
-        age_diff = (predicted_ages - true_ages).abs()
-        eae_loss = age_diff.mean() / self.max_age_diff  # [0,1]
-        
-        # 5. Combina con α
-        loss = ce_loss + self.alpha * eae_loss
-        
-        # Restituisce ESATTAMENTE come nella tua implementazione
+    def forward(self, logits, y, return_predicted_label=False):
+        """
+        logits: [B,K], y: [B] int64
+        """
+        B, K = logits.shape
+        device = logits.device
+        idx = torch.arange(B, device=device)
+
+        # 1) CE sempre presente (nessun controllo)
+        ce_vec = self.ce(logits, y)                 # [B]
+        ce_loss = ce_vec.mean() * self.inv_logK     # scalar
+        ce_loss = ce_loss * self.ce_weight
+
+        # Probabilità normalizzate
+        probs = F.softmax(logits, dim=1).clamp_min(self.eps)
+        probs = probs / probs.sum(dim=1, keepdim=True)
+
+        # 2) FarProbMargin: vieta errori lontani (|k-y|>1)
+        far_mask = self.dist_idx.index_select(0, y) > 1          # [B,K] bool
+        far_vals = probs.masked_fill(~far_mask, -float('inf'))
+        far_max = far_vals.max(dim=1).values
+        far_max = torch.where(torch.isfinite(far_max), far_max, torch.zeros_like(far_max))
+        py = probs[idx, y]
+        far_margin = F.relu(far_max - (py - self.delta_far)).mean()
+
+        # 3) TailWeighted: penalità crescente con la distanza fuori ±1
+        tail_w = self.tail_weights.index_select(0, y)            # [B,K]
+        tail = (probs * tail_w).sum(dim=1).mean()
+
+        # 4) LocalPeak: gap con i vicini
+        left_ok  = (y > 0)
+        right_ok = (y + 1 < K)
+        py_left  = torch.zeros(B, device=device, dtype=probs.dtype)
+        py_right = torch.zeros(B, device=device, dtype=probs.dtype)
+        if left_ok.any():
+            py_left[left_ok] = probs[idx[left_ok], y[left_ok] - 1]
+        if right_ok.any():
+            py_right[right_ok] = probs[idx[right_ok], y[right_ok] + 1]
+        neighbor_max = torch.maximum(py_left, py_right)
+        local_peak = F.relu(neighbor_max - (py - self.prob_margin)).mean()
+
+        # EMD^2 (CDF) per ordinalità globale
+        emd2 = 0.0
+        if self.w_emd != 0.0:
+            cdf_pred = probs.cumsum(dim=-1)                         # [B,K]
+            cdf_true = self.cdf_true_table.index_select(0, y)       # [B,K]
+            diff2 = (cdf_pred - cdf_true).pow(2) * self.cdf_weights # [B,K] broadcast
+            emd2 = diff2.sum(dim=-1).mean()
+
+        # combinazione
+        ord_block = (
+            self.w_far   * far_margin +
+            self.w_tail  * tail +
+            self.w_lpeak * local_peak +
+            self.w_emd   * emd2
+        )
+        loss = ce_loss + self.alpha * ord_block
+
         if return_predicted_label:
-            pred = torch.argmax(logit, dim=1)
+            pred = probs.argmax(dim=1)
             return loss, pred
-        
         return loss
+
+
 
 class OrdinalLoss(nn.Module):
-    def __init__(self, num_classes=9, alpha=0.05, max_dataset_age=108.0, weights=None, 
-                 rare_classes=None, rare_class_min_weight=8.0):
+    def set_weights(self, alpha=None, w_ese=None, w_emd=None, w_tail=None, w_lpeak=None, w_uni=None):
         """
-        num_classes: Numero di gruppi d'età (default=9)
-        alpha: Peso per componente ordinale (0.05 consigliato)
-        max_dataset_age: Età massima presente nel dataset (108.0)
-        weights: Pesi per gestire sbilanciamento dataset (opzionale)
-        rare_classes: Indici delle classi rare (es. [0, 8] per "0-2" e "70+")
-        rare_class_min_weight: Peso minimo garantito per classi rare
+        Permette di modificare i pesi dei contributi della loss e alpha runtime.
         """
+        if alpha is not None:
+            self.alpha = float(alpha)
+        if w_ese is not None:
+            self.w_ese = float(w_ese)
+        if w_emd is not None:
+            self.w_emd = float(w_emd)
+        if w_tail is not None:
+            self.w_tail = float(w_tail)
+        if w_lpeak is not None:
+            self.w_lpeak = float(w_lpeak)
+        if w_uni is not None:
+            self.w_uni = float(w_uni)
+    """
+    Loss 'peaked & local' per età a bin ordinati:
+      Loss = CE_norm
+           + alpha * [ 1.0*ESE(dist^2) + 0.5*EMD + 3.0*Tail(|k-y|>1)
+                      + 2.0*LocalPeak + 0.5*Unimodal ]
+
+    - CE_norm: garantisce il picco sulla classe vera
+    - ESE (quadratica): punisce fortemente errori lontani
+    - EMD: allinea la CDF (ordine)
+    - Tail: spinge quasi a zero la massa oltre i vicini (|k-y|>1)
+    - LocalPeak: forza p[y] >= max(p[y-1], p[y+1]) (+margine)
+    - Unimodal: decrescita regolare allontanandosi dal picco
+
+    Firma invariata:
+        __init__(num_classes, ordinal_loss='mae', weights=None, alpha=0.05)
+    """
+    def __init__(self, num_classes, ordinal_loss='mae', weights=None, alpha=0.5,
+                 w_ese=2.0, w_emd=2.0, w_tail=5.0, w_lpeak=5.0, w_uni=1.5):
         super().__init__()
-        self.num_classes = num_classes
-        self.alpha = alpha
-        self.max_dataset_age = max_dataset_age
+        self.num_classes = int(num_classes)
+        self.alpha = float(alpha)
+        self.w_ese = w_ese
+        self.w_emd = w_emd
+        self.w_tail = w_tail
+        self.w_lpeak = w_lpeak
+        self.w_uni = w_uni
+
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        
-        # 1. CENTRI AGGIORNATI con età massima 108 anni
-        # Nota: "70+" ora va da 70 a 108 → centro = (70+108)/2 = 89.0
-        self.age_centers = torch.tensor([
-            1.0,    # 0-2
-            6.0,    # 3-9
-            14.5,   # 10-19
-            24.5,   # 20-29
-            34.5,   # 30-39
-            44.5,   # 40-49
-            54.5,   # 50-59
-            64.5,   # 60-69
-            89.0    # 70-108 (non più 85.0!)
-        ]).float().to(device)
-        
-        # 2. Massima differenza in anni (aggiornata con età massima 108)
-        self.max_age_diff = self.age_centers[-1] - self.age_centers[0]  # 88.0 anni
-        
-        # 3. Dimensioni reali dei bin (aggiornate)
-        bin_sizes = torch.tensor([
-            3.0,   # 0-2
-            7.0,   # 3-9
-            10.0,  # 10-19
-            10.0,  # 20-29
-            10.0,  # 30-39
-            10.0,  # 40-49
-            10.0,  # 50-59
-            10.0,  # 60-69
-            38.0   # 70-108 (non più 30.0!)
-        ]).float().to(device)
-        
-        # 4. Pesi per lo sbilanciamento dei BIN
-        bin_weights = 1.0 / bin_sizes
-        bin_weights = bin_weights / bin_weights.sum() * num_classes
-        
-        # 5. GESTIONE CLASSI RARE (bambini e anziani)
-        self.rare_classes = rare_classes if rare_classes is not None else [0, 8]  # Default: 0-2 e 70+
-        
-        # 6. COMBINA con pesi per lo sbilanciamento del DATASET
+        K = self.num_classes
+
+        # --- costanti ---
+        self.register_buffer("inv_logK", torch.tensor(1.0 / math.log(K), device=device))
+        self.register_buffer("inv_Km1", torch.tensor(1.0 / (K - 1), device=device))
+
+        # --- indici e matrici precompute ---
+        classes = torch.arange(K, dtype=torch.float32, device=device)  # [K]
+        self.register_buffer("classes_range", classes.unsqueeze(0))     # [1,K]
+
+        # Distanze normalizzate |j-i|/(K-1) e quadratiche
+        i = classes.view(K, 1)
+        j = classes.view(1, K)
+        D = (j - i).abs() * self.inv_Km1          # [K,K] in [0,1]
+        self.register_buffer("dist_matrix", D)
+        self.register_buffer("dist2_matrix", D ** 2)
+
+        # CDF target (triangolare inferiore)
+        self.register_buffer("cdf_true_table", torch.tril(torch.ones(K, K, device=device)))
+
+        # Maschera per massa fuori raggio 1: |j-i| > 1
+        self.register_buffer("mask_outside1", (D > (1.0 * self.inv_Km1)).to(torch.float32))  # [K,K]
+
+        # d = 1..K-1 per unimodalità
+        self.register_buffer("d_vec", torch.arange(1, K, device=device))
+
+        # Pesi per sbilanciamento
         if weights is not None:
-            # Verifica lunghezza pesi
-            assert len(weights) == num_classes, f"weights deve avere lunghezza {num_classes}"
-            dataset_weights = weights.float().to(device)
-            
-            # Combina pesi: bin_weights * dataset_weights
-            combined_weights = bin_weights * dataset_weights
-            
-            # 7. APPLICA MIN_WEIGHT per classi rare
-            for cls_idx in self.rare_classes:
-                combined_weights[cls_idx] = max(combined_weights[cls_idx], rare_class_min_weight)
-            
-            # Normalizza (media=1 come in CrossEntropyLoss)
-            self.class_weights = combined_weights / combined_weights.mean()
+            w = weights.to(device, dtype=torch.float32)
+            if w.numel() != K:
+                raise ValueError(f"'weights' must have length {K}, got {w.numel()}")
+            self.register_buffer("class_weights", w)
         else:
-            # Se nessun peso fornito, usa solo bin_weights ma con min_weight per classi rare
-            self.class_weights = bin_weights.clone()
-            for cls_idx in self.rare_classes:
-                self.class_weights[cls_idx] = max(self.class_weights[cls_idx], rare_class_min_weight)
-            self.class_weights = self.class_weights / self.class_weights.mean()
-        
-        # 8. Inizializza CE con pesi combinati
-        self.ce = nn.CrossEntropyLoss(weight=self.class_weights)
+            self.register_buffer("class_weights", torch.ones(K, device=device))
+
+        # CE pesata (sbilanciamento)
+        self.ce = nn.CrossEntropyLoss(weight=self.class_weights, reduction='none')
+
+        # Margine per il vincolo locale p[y] >= max(p[y±1]) - margin
+        self.local_margin = 0.25
 
     def forward(self, logit, true_labels, return_predicted_label=False):
-        # 1. Cross-Entropy NORMALIZZATA
-        ce_loss = self.ce(logit, true_labels) / math.log(self.num_classes)
-        
-        # 2. Calcola età predetta con CENTRI AGGIORNATI
-        probs = torch.softmax(logit, dim=1)
-        predicted_ages = probs @ self.age_centers  # [B]
-        
-        # 3. Età vera con CENTRI AGGIORNATI
-        true_ages = self.age_centers[true_labels]  # [B]
-        
-        # 4. Calcola EAE con max_age_diff AGGIORNATO (88.0 anni)
-        age_diff = (predicted_ages - true_ages).abs()
-        eae_loss = age_diff.mean() / self.max_age_diff  # Normalizzato in [0,1]
-        
-        # 5. Combina con α
-        loss = ce_loss + self.alpha * eae_loss
-        
-        # Restituisce ESATTAMENTE come nella tua implementazione
+        K = self.num_classes
+        B = logit.size(0)
+        device = logit.device
+
+        # --- CE (picco sulla classe vera), normalizzata ---
+        ce_vec = self.ce(logit, true_labels)          # [B]
+        ce_loss = ce_vec.mean() * self.inv_logK
+
+        # --- Probabilità ---
+        probs = F.softmax(logit, dim=1)               # [B,K]
+
+        # --- ESE: distanza quadratica attesa (forte sui lontani) ---
+        D2_y = self.dist2_matrix.index_select(0, true_labels)      # [B,K]
+        ese = (probs * D2_y).sum(dim=1)                            # [B]
+        ese = ese * self.class_weights.index_select(0, true_labels)
+        ese = ese.mean()
+
+        # --- EMD/CDF (ordine globale) ---
+        cdf_pred = probs.cumsum(dim=-1)                             # [B,K]
+        cdf_true = self.cdf_true_table.index_select(0, true_labels) # [B,K]
+        emd = ( (cdf_pred - cdf_true).pow(2).sum(dim=-1) / K ).mean()
+
+        # --- Tail: massa fuori raggio 1 (|k-y|>1) ---
+        tail_mask = self.mask_outside1.index_select(0, true_labels) # [B,K]
+        tail = (probs * tail_mask).sum(dim=1).mean()
+
+        # --- Local peak: p[y] >= max(p[y-1], p[y+1]) - margin ---
+        idx = torch.arange(B, device=device)
+        py = probs[idx, true_labels]
+        left_ok  = (true_labels > 0)
+        right_ok = (true_labels + 1 < K)
+        py_left  = torch.zeros(B, device=device, dtype=probs.dtype)
+        py_right = torch.zeros(B, device=device, dtype=probs.dtype)
+        if left_ok.any():
+            py_left[left_ok] = probs[idx[left_ok], true_labels[left_ok] - 1]
+        if right_ok.any():
+            py_right[right_ok] = probs[idx[right_ok], true_labels[right_ok] + 1]
+        p_neighbor_max = torch.maximum(py_left, py_right)
+        # penalizza se max(vicini) > py - margin  -> ReLU(max - (py - m))
+        local_peak = F.relu(p_neighbor_max - (py - self.local_margin)).mean()
+
+        # --- Unimodalità: decrescita regolare dai vicini verso l'esterno ---
+        total_viols = logit.new_tensor(0.0)
+        count_viols = 0
+        for d in self.d_vec.tolist():  # 1..K-1
+            # sinistra
+            lpos, lprev = true_labels - d, true_labels - (d - 1)
+            maskL = (lpos >= 0)
+            if maskL.any():
+                v = F.relu(probs[idx[maskL], lpos[maskL]] - probs[idx[maskL], lprev[maskL]])
+                total_viols = total_viols + v.sum()
+                count_viols += v.numel()
+            # destra
+            rpos, rprev = true_labels + d, true_labels + (d - 1)
+            maskR = (rpos < K)
+            if maskR.any():
+                v = F.relu(probs[idx[maskR], rpos[maskR]] - probs[idx[maskR], rprev[maskR]])
+                total_viols = total_viols + v.sum()
+                count_viols += v.numel()
+        unimodal = total_viols / count_viols if count_viols > 0 else logit.sum() * 0.0
+
+        # --- combinazione ---
+        ord_block = (
+            self.w_ese   * ese   +
+            self.w_emd   * emd   +
+            self.w_tail  * tail  +
+            self.w_lpeak * local_peak +
+            self.w_uni   * unimodal
+        )
+
+        loss = ce_loss + self.alpha * ord_block
+
         if return_predicted_label:
-            pred = torch.argmax(logit, dim=1)
-            return eae_loss, predicted_ages
-        
+            pred = torch.argmax(probs, dim=1)
+            return loss, pred
         return loss
+
+    def update_alpha(self, alpha):
+        self.alpha = float(alpha)
 
 class OrdinalLoss_(nn.Module):
     def __init__(self, num_classes, ordinal_loss='mae', weights=None, alpha=0.05):

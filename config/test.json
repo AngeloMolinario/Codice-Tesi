@@ -1,9 +1,9 @@
 {
     "TUNING" : "vpt",
     "MODEL"  : "PECore",
-    "TASK"   : 2,
+    "TASK"   : -1,
 
-    "NUM_VISUAL_PROMPT" : 30,
+    "NUM_VISUAL_PROMPT" : 50,
     "NUM_TEXT_CNTX" : 0,
     "TASK_NAMES": ["age estimation", "gender recognition", "emotion classification"],
     "CLASSES": [
@@ -54,10 +54,10 @@
     "BATCH_SIZE" : 100,
     "NUM_WORKERS" : 2,
     "PREFETCH_FACTOR" : 5,
-    "LR" : 1e-4,
-    "OUTPUT_DIR" : "../TRAIN_EMOTION/vpt_std_norm",
+    "LR" : 1e-3,
+    "OUTPUT_DIR" : "../TRAIN_MTK/vptalphawup",
     "VERBOSE": true,
-    "USE_TQDM":true,
-    "EPOCHS" : 5,    
+    "USE_TQDM":false,
+    "EPOCHS" : 20,    
     "TASK_WEIGHTS" : [1.0, 1.0, 1.0]
 }

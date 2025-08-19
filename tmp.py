@@ -136,25 +136,28 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
             if compute_text_features:
                 text_features = model.get_text_features(normalize=True)
 
-            image_features = model.get_image_features(image, normalize=True)
-            logits = model.logit_scale.exp() * (image_features @ text_features.T)
-            logits_by_task = torch.split(logits, logit_split, dim=1)
+            # --- abilita autocast per mixed precision ---
+            from torch.cuda.amp import autocast
+            with autocast():
+                image_features = model.get_image_features(image, normalize=True)
+                logits = model.logit_scale.exp() * (image_features @ text_features.T)
+                logits_by_task = torch.split(logits, logit_split, dim=1)
 
-            total_loss = 0.0
+                total_loss = 0.0
 
-            for i in range(len(loss_fn)):
-                loss_i, pred_i = loss_fn[i](logits_by_task[i], labels[:, i], return_predicted_label=True)
-                losses_sums[i] += loss_i.detach()
+                for i in range(len(loss_fn)):
+                    loss_i, pred_i = loss_fn[i](logits_by_task[i], labels[:, i], return_predicted_label=True)
+                    losses_sums[i] += loss_i.detach()
 
-                valid_mask = labels[:, i] != -1
-                if valid_mask.any():
-                    preds_per_task[i].append(pred_i[valid_mask].detach())
-                    labels_per_task[i].append(labels[valid_mask, i].detach())
-                    probs_per_task[i].append(torch.softmax(logits_by_task[i][valid_mask], dim=1).detach())
+                    valid_mask = labels[:, i] != -1
+                    if valid_mask.any():
+                        preds_per_task[i].append(pred_i[valid_mask].detach())
+                        labels_per_task[i].append(labels[valid_mask, i].detach())
+                        probs_per_task[i].append(torch.softmax(logits_by_task[i][valid_mask], dim=1).detach())
 
-                total_loss = total_loss + task_weight[i] * loss_i
+                    total_loss = total_loss + task_weight[i] * loss_i
 
-            losses_sums[-1] += total_loss.detach()
+                losses_sums[-1] += total_loss.detach()
 
             if not config.USE_TQDM and (num_batch + 1) % 100 == 0:
                 print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r')
@@ -188,13 +191,19 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
 config = Config(sys.argv[1])
 
 output_dir = config.OUTPUT_DIR
-final_dir = "../TEST_VPT/OL3"
+final_dir = sys.argv[2]
 
-vision_ckpt = os.path.join(output_dir, "ckpt", "best_accuracy_model.pt")
+m = "best_accuracy_model.pt"
+if sys.argv[3] == 'val':
+    m = "best_model.pt"
+elif sys.argv[3] == 'latest':
+    m = "last_model.pt"
+
+vision_ckpt = os.path.join(output_dir, "ckpt", m)
 
 if config.TUNING.lower() == 'softcpt':
     print("Inizializzazione del modello SoftCPT")
-    base_model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=0)
+    base_model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
     model_ = CustomModel(
         n_ctx=config.NUM_TEXT_CNTX,
         tasknames=config.TASK_NAMES,
