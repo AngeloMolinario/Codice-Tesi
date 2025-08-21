@@ -3,7 +3,7 @@
     "MODEL"  : "PECore",
     "TASK"   : 0,
 
-    "NUM_VISUAL_PROMPT" : 50,
+    "NUM_VISUAL_PROMPT" : 40,
     "NUM_TEXT_CNTX" : 0,
     "TASK_NAMES": ["age estimation", "gender recognition", "emotion classification"],
     "CLASSES": [
@@ -12,16 +12,16 @@
         ["surprise", "fear", "disgust", "happy", "sad", "angry", "neutral"]
     ],
     "TEXT_CLASSES_PROMPT": [
-        [
-            "A photo of a person between 0 and 2 years old",
-            "A photo of a person between 3 and 9 years old",
-            "A photo of a person between 10 and 19 years old",
-            "A photo of a person between 20 and 29 years old",
-            "A photo of a person between 30 and 39 years old",
-            "A photo of a person between 40 and 49 years old",
-            "A photo of a person between 50 and 59 years old",
-            "A photo of a person between 60 and 69 years old",
-            "A photo of a person with more than 70 years old"
+        [        
+            "A photo of a newborn between 0 and 2 years old",
+            "A photo of a child between 3 and 9 years old",
+            "A photo of a teenager between 10 and 19 years old",
+            "A photo of a young adult between 20 and 29 years old",
+            "A photo of a middle-aged person between 30 and 39 years old",
+            "A photo of an adult between 40 and 49 years old",
+            "A photo of an adult between 50 and 59 years old",
+            "A photo of a senior adult between 60 and 69 years old",
+            "A photo of an elder person with more than 70 years old"
         ],
         [
             "A photo of a man",
@@ -49,15 +49,16 @@
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
-    "DATASET_ROOT": "../datasets/datasets_with_standard_labels",
+    "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 32,
+    "BATCH_SIZE" : 100,
     "NUM_WORKERS" : 8,
-    "PREFETCH_FACTOR" : 4,
-    "LR" : 1e-3,
-    "OUTPUT_DIR" : "../TRAIN_AGE/ONLY_CE",
+    "PREFETCH_FACTOR" : 1,
+    "LR" : 3e-3,
+    "OUTPUT_DIR" : "../TRAIN_AGE/CORAL_NEW_OPROMPT50",
     "VERBOSE": true,
     "USE_TQDM":true,
     "EPOCHS" : 10,    
     "TASK_WEIGHTS" : [1.0, 1.0, 1.0]
+
 }

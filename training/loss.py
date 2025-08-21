@@ -1,143 +1,245 @@
 import torch
-from torch import nn
 from torch.nn import functional as F
 import math
-import torch
 import torch.nn as nn
 
-
-class OrdinalPeakedCELoss(nn.Module):
-    """
-    Loss = CE_norm
-         + alpha * [ w_far   * FarProbMargin
-                     w_tail  * TailWeighted
-                     w_lpeak * LocalPeak
-                     w_emd   * EMD^2 ]
-
-    - CE_norm           : massimizza l'accuracy
-    - FarProbMargin     : vieta errori lontani (|k-y|>1) in probabilità
-    - TailWeighted      : localizza la massa fuori ±1 con peso crescente
-    - LocalPeak         : gap p[y] ≥ max(p[y±1]) + margin
-    - EMD^2 (CDF)       : ordinalità globale
-    - widths (opz.)     : pesi per EMD^2 quando i bin hanno ampiezze diverse
-    """
-    def __init__(self, num_classes, weights=None, widths=[3, 7, 10, 10, 10, 10, 10, 10, 25],
-                 alpha=1.0,
-                 w_far=1.0,      delta_far=0.01,
-                 w_lpeak=4.0,    prob_margin=0.2,
-                 w_emd=3.5,
-                 ce_weight=0.5,
-                 eps=1e-8):
+class HybridOrdinalLossV2_(nn.Module):
+    def __init__(self,
+                 num_classes=9,
+                 alpha=0.3,
+                 beta=0.7,
+                 gamma=0.0,
+                 eta=0.30,
+                 lambda_dist=0.9,
+                 support_radius=2,
+                 temperature=None,
+                 class_weights=None):
         super().__init__()
-        self.num_classes = int(num_classes)
+        self.num_classes = num_classes
         self.alpha = float(alpha)
-        self.w_far = float(w_far)
-        self.delta_far = float(delta_far)
-        self.w_lpeak = float(w_lpeak)
-        self.prob_margin = float(prob_margin)
-        self.w_emd = float(w_emd)
-        self.ce_weight = float(ce_weight)
-        self.eps = float(eps)
+        self.beta  = float(beta)
+        self.gamma = float(gamma)
+        self.eta   = float(eta)
+        self.temperature = temperature
+        self.lambda_dist = float(lambda_dist)
+        self.support_radius = None if support_radius is None else int(support_radius)
 
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        K = self.num_classes
-        assert K >= 3, "Servono almeno 3 classi."
-
-        # costanti
-        self.register_buffer("inv_logK", torch.tensor(1.0 / math.log(K), device=device))
-
-        # distanze intere |j-i|
-        classes = torch.arange(K, dtype=torch.float32, device=device)
-        i = classes.view(K, 1); j = classes.view(1, K)
-        d_idx = (j - i).abs()                        # [K,K] ∈ {0,1,2,...}
-        self.register_buffer("dist_idx", d_idx)
-
-        # CDF target per EMD^2
-        self.register_buffer("cdf_true_table", torch.tril(torch.ones(K, K, device=device)))
-
-        # pesi per EMD^2 (bin non uniformi)
-        if widths is not None:
-            widths = torch.tensor(widths, device=device, dtype=torch.float32)
-            widths = widths.to(device=device, dtype=torch.float32)
-            w = widths.to(device=device, dtype=torch.float32)
-            if w.numel() != K:
-                raise ValueError(f"'widths' deve avere lunghezza {K}, got {w.numel()}")
-            cdf_w = w / w.sum()
+        # pesi di classe
+        if class_weights is None:
+            cw = torch.ones(num_classes, dtype=torch.float32)
+        elif isinstance(class_weights, (list, tuple)):
+            cw = torch.tensor(class_weights, dtype=torch.float32)
         else:
-            cdf_w = torch.full((K,), 1.0 / K, device=device)
-        self.register_buffer("cdf_weights", cdf_w)    # [K]
+            cw = class_weights.float()
+        cw = cw / cw.mean().clamp_min(1e-12)
+        self.register_buffer('class_weights', cw)
 
-        # pesi di classe per CE
-        if weights is not None:
-            cw = weights.to(device=device, dtype=torch.float32)
-            if cw.numel() != K:
-                raise ValueError(f"'weights' deve avere lunghezza {K}, got {cw.numel()}")
-            self.register_buffer("class_weights", cw)
-        else:
-            self.register_buffer("class_weights", torch.ones(K, device=device))
+        self.register_buffer('distance_weights',
+                             self._build_distance_weights(num_classes,
+                                                          self.lambda_dist,
+                                                          self.support_radius))
 
-        self.ce = nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean')
+    @staticmethod
+    def _build_distance_weights(C, lam, R):
+        device = "cpu"  # inizialmente, poi spostato da register_buffer
+        i = torch.arange(C, device=device).unsqueeze(1)
+        j = torch.arange(C, device=device).unsqueeze(0)
+        dist = (i - j).abs().float()
+        W = torch.exp(-lam * dist)
+        if R is not None:
+            W = torch.where(dist <= R, W, torch.zeros_like(W))
+        W = W / (W.sum(dim=1, keepdim=True) + 1e-12)
+        return W
 
+    @torch.no_grad()
+    def predict(self, logits):
+        z = logits / self.temperature if (self.temperature is not None) else logits
+        return z.argmax(dim=1)
 
-    def forward(self, logits, y, return_predicted_label=False):
-        """
-        logits: [B,K], y: [B] int64
-        """
-        B, K = logits.shape
+    def forward(self, logits, targets, return_predicted_label=False):
         device = logits.device
-        idx = torch.arange(B, device=device)
+        z = logits / self.temperature if (self.temperature is not None) else logits
+        loss_total = 0.0
 
-        # 1) CE sempre presente (nessun controllo)
-        ce_loss = self.ce(logits, y)  * self.inv_logK               # [B]
-        ce_loss = ce_loss * self.ce_weight
+        if self.alpha > 0:
+            loss_total = loss_total + self.alpha * self._coral_adapted_loss(z, targets, device)
 
-        # Probabilità normalizzate
-        probs = F.softmax(logits, dim=1)
+        if self.beta > 0:
+            loss_total = loss_total + self.beta * self._soft_ce_peaked(z, targets, eta=self.eta, device=device)
 
-        # 2) FarProbMargin: vieta errori lontani (|k-y|>1)
-        far_mask = self.dist_idx.index_select(0, y) > 1          # [B,K] bool
-        far_vals = probs.masked_fill(~far_mask, -float('inf'))
-        far_max = far_vals.max(dim=1).values
-        far_max = torch.where(torch.isfinite(far_max), far_max, torch.zeros_like(far_max))
-        py = probs[idx, y]
-        far_margin = F.relu(far_max - (py - self.delta_far)) * self.class_weights[y]  # [B]
-        far_margin = far_margin.mean()
+        if self.gamma > 0:
+            loss_total = loss_total + self.gamma * self._emd_loss(z, targets)
 
-        # 4) LocalPeak: gap con i vicini
-        left_ok  = (y > 0)
-        right_ok = (y + 1 < K)
-        py_left  = torch.zeros(B, device=device, dtype=probs.dtype)
-        py_right = torch.zeros(B, device=device, dtype=probs.dtype)
-        if left_ok.any():
-            py_left[left_ok] = probs[idx[left_ok], y[left_ok] - 1]
-        if right_ok.any():
-            py_right[right_ok] = probs[idx[right_ok], y[right_ok] + 1]
-        neighbor_max = torch.maximum(py_left, py_right)
-        local_peak = F.relu(neighbor_max - (py - self.prob_margin)) * self.class_weights[y]
+        return loss_total, logits.argmax(dim=1)
 
-        local_peak = local_peak.mean()
+    def _soft_ce_peaked(self, logits, targets, eta=0.3, device="cpu"):
+        B, C = logits.shape
+        log_p = F.log_softmax(logits, dim=1)
+        q_soft = self.distance_weights[targets]              # [B,C], già buffer -> segue device del modulo
+        one_hot = F.one_hot(targets, num_classes=C).float().to(device)
+        q = (1.0 - eta) * one_hot + eta * q_soft
 
-        # EMD^2 (CDF) per ordinalità globale
-        emd2 = 0.0
-        if self.w_emd != 0.0:
-            cdf_pred = probs.cumsum(dim=-1)                         # [B,K]
-            cdf_true = self.cdf_true_table.index_select(0, y)       # [B,K]
-            diff2 = (cdf_pred - cdf_true).pow(2) * self.cdf_weights # [B,K] broadcast
-            emd2 = diff2.sum(dim=-1) * self.class_weights[y]  # [B]
-            emd2 = emd2.mean()
+        ce = -(q * log_p).sum(dim=1)
+        ce = ce * self.class_weights[targets]
+        return ce.mean()
 
-        # combinazione
-        ord_block = (
-            self.w_far   * far_margin +
-            self.w_lpeak * local_peak +
-            self.w_emd   * emd2
-        )
-        loss = ce_loss + self.alpha * ord_block
+    def _coral_adapted_loss(self, logits, targets, device="cpu"):
+        B, C = logits.shape
+        T = C - 1
+        p = F.softmax(logits, dim=1)
+        cdf_left = p.cumsum(dim=1)
+        q_right = 1.0 - cdf_left[:, :-1]
+        q_right = q_right.clamp(1e-8, 1 - 1e-8)
+        ordinal_logits = torch.log(q_right) - torch.log1p(-q_right)
 
-        if return_predicted_label:
-            pred = probs.argmax(dim=1)
-            return loss, pred
-        return loss
+        i = torch.arange(T, device=device).view(1, -1)
+        bin_targets = (targets.unsqueeze(1) > i).float()
+        w = self.class_weights[targets].unsqueeze(1)
+        loss = F.binary_cross_entropy_with_logits(ordinal_logits, bin_targets, weight=w, reduction='none')
+        return loss.mean()
+
+    def _emd_loss(self, logits, targets):
+        p = F.softmax(logits, dim=1)
+        cdf_p = p.cumsum(dim=1)
+        t = F.one_hot(targets, num_classes=self.num_classes).float().to(logits.device)
+        cdf_t = t.cumsum(dim=1)
+        diff2 = (cdf_p - cdf_t).pow(2).sum(dim=1) * self.class_weights[targets]
+        return diff2.mean()
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class HybridOrdinalLossV2(nn.Module):
+    def __init__(self,
+                 num_classes=9,
+                 alpha=0.3,
+                 beta=0.7,              # peso della HINGE "peaked"
+                 gamma=0.0,
+                 eta=0.30,
+                 lambda_dist=0.9,
+                 support_radius=2,
+                 temperature=None,
+                 class_weights=None,
+                 hinge_margin=1.0,
+                 hinge_squared=False):
+        super().__init__()
+        self.num_classes = num_classes
+        self.alpha = float(alpha)
+        self.beta  = float(beta)
+        self.gamma = float(gamma)
+        self.eta   = float(eta)
+        self.temperature = temperature
+        self.lambda_dist = float(lambda_dist)
+        self.support_radius = None if support_radius is None else int(support_radius)
+        self.hinge_margin = float(hinge_margin)
+        self.hinge_squared = bool(hinge_squared)
+
+        # pesi di classe
+        if class_weights is None:
+            cw = torch.ones(num_classes, dtype=torch.float32)
+        elif isinstance(class_weights, (list, tuple)):
+            cw = torch.tensor(class_weights, dtype=torch.float32)
+        else:
+            cw = class_weights.float()
+        cw = cw / cw.mean().clamp_min(1e-12)
+        self.register_buffer('class_weights', cw)
+
+        self.register_buffer('distance_weights',
+                             self._build_distance_weights(num_classes,
+                                                          self.lambda_dist,
+                                                          self.support_radius))
+
+    @staticmethod
+    def _build_distance_weights(C, lam, R):
+        device = "cpu"
+        i = torch.arange(C, device=device).unsqueeze(1)
+        j = torch.arange(C, device=device).unsqueeze(0)
+        dist = (i - j).abs().float()
+        W = torch.exp(-lam * dist)
+        if R is not None:
+            W = torch.where(dist <= R, W, torch.zeros_like(W))
+        W = W / (W.sum(dim=1, keepdim=True) + 1e-12)
+        return W
+
+    @torch.no_grad()
+    def predict(self, logits):
+        z = logits / self.temperature if (self.temperature is not None) else logits
+        return z.argmax(dim=1)
+
+    def forward(self, logits, targets, return_predicted_label=False):
+        device = logits.device
+        z = logits / self.temperature if (self.temperature is not None) else logits
+        loss_total = 0.0
+
+        if self.alpha > 0:
+            loss_total = loss_total + self.alpha * self._coral_adapted_loss(z, targets, device)
+
+        if self.beta > 0:
+            # HINGE "peaked" al posto della CE "peaked"
+            loss_total = loss_total + self.beta * self._hinge_peaked(
+                z, targets, eta=self.eta, margin=self.hinge_margin,
+                squared=self.hinge_squared, device=device
+            )
+
+        if self.gamma > 0:
+            loss_total = loss_total + self.gamma * self._emd_loss(z, targets)
+
+        return loss_total, logits.argmax(dim=1)
+
+    # --------- NUOVO: Hinge con soft-label peaked ----------
+    def _hinge_peaked(self, logits, targets, eta=0.3, margin=1.0, squared=False, device="cpu"):
+        """
+        Multiclasse 'one-vs-all' con etichette morbide:
+          - Costruisco q (peaked): q = (1-eta)*one_hot + eta*kernel_ordinale
+          - Mappo in y in [-1,+1]: y = 2*q - 1
+          - Applico hinge per-classe: max(0, m - y*z)
+            (per y≈+1 spinge z in alto; per y≈-1 spinge z in basso)
+        """
+        B, C = logits.shape
+
+        # q 'peaked' (come nella tua CE)
+        q_soft = self.distance_weights[targets]                      # [B,C] buffer → segue device del modulo
+        one_hot = F.one_hot(targets, num_classes=C).float().to(device)
+        q = (1.0 - eta) * one_hot + eta * q_soft
+
+        # y in [-1,+1]
+        y = 2.0 * q - 1.0                                            # [B,C]
+
+        # hinge per-classe
+        # m_k = margin - y_k * z_k
+        m = margin - y * logits
+        h = torch.clamp(m, min=0.0)
+        if squared:
+            h = h * h
+
+        # media per campione sulle classi, poi pesi di classe sul target "hard"
+        per_sample = h.mean(dim=1) * self.class_weights[targets]
+        return per_sample.mean()
+
+    # --------- come prima ----------
+    def _coral_adapted_loss(self, logits, targets, device="cpu"):
+        B, C = logits.shape
+        T = C - 1
+        p = F.softmax(logits, dim=1)
+        cdf_left = p.cumsum(dim=1)
+        q_right = 1.0 - cdf_left[:, :-1]
+        q_right = q_right.clamp(1e-8, 1 - 1e-8)
+        ordinal_logits = torch.log(q_right) - torch.log1p(-q_right)
+
+        i = torch.arange(T, device=device).view(1, -1)
+        bin_targets = (targets.unsqueeze(1) > i).float()
+        w = self.class_weights[targets].unsqueeze(1)
+        loss = F.binary_cross_entropy_with_logits(ordinal_logits, bin_targets, weight=w, reduction='none')
+        return loss.mean()
+
+    def _emd_loss(self, logits, targets):
+        p = F.softmax(logits, dim=1)
+        cdf_p = p.cumsum(dim=1)
+        t = F.one_hot(targets, num_classes=self.num_classes).float().to(logits.device)
+        cdf_t = t.cumsum(dim=1)
+        diff2 = (cdf_p - cdf_t).pow(2).sum(dim=1) * self.class_weights[targets]
+        return diff2.mean()
 
 
 class CrossEntropyLoss():
