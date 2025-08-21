@@ -95,7 +95,86 @@ def map_age_to_group(age):
     except (ValueError, TypeError) as e:
         print(f"Warning: Cannot convert age '{age}' to float: {e}")
         return -1
+    
+def map_age_to_group_(age):
+    """
+    Map individual age values to age group categories.
 
+    Age groups:
+    - 0: 0-2 years
+    - 1: 3-9 years
+    - 2: 10-19 years
+    - 3: 20-29 years
+    - 4: 30-39 years
+    - 5: 40-49 years
+    - 6: 50-59 years
+    - 7: 60-69 years
+    - 8: 70+ years
+
+    Args:
+        age: individual age value or age category string
+
+    Returns:
+        age group category (0-8) or -1 for missing values
+    """
+    if age == -1:  # Missing value
+        return -1
+
+    # Check if age is already a category (contains "-" or "more")
+    if isinstance(age, str):
+        age_str = str(age).lower()
+        if "-" in age_str or "more" in age_str or "+" in age_str:
+            if "0-2" == age_str:
+                return 0
+            elif "3-9" == age_str:
+                return 0
+            elif "10-19" == age_str:
+                return 1
+            elif "20-29" == age_str:
+                return 2
+            elif "30-39" == age_str:
+                return 2
+            elif "40-49" == age_str:
+                return 3
+            elif "50-59" == age_str:
+                return 3
+            elif "60-69" == age_str:
+                return 4
+            elif "70" in age_str or ("more" in age_str or "+" in age_str):
+                return 4
+            else:
+                return -1  # Unknown category format
+
+    # If age is numeric, perform standard mapping
+    try:
+        age_num = float(age)
+        age_rounded = round(age_num)
+
+        if 0 <= age_rounded <= 2:
+            return 0
+        elif 3 <= age_rounded <= 9:
+            return 0
+        elif 10 <= age_rounded <= 19:
+            return 1
+        elif 20 <= age_rounded <= 29:
+            return 2
+        elif 30 <= age_rounded <= 39:
+            return 2
+        elif 40 <= age_rounded <= 49:
+            return 3
+        elif 50 <= age_rounded <= 59:
+            return 3
+        elif 60 <= age_rounded <= 69:
+            return 4
+        elif age_rounded >= 70:
+            return 4
+        else:
+            print(f"Warning: Age {age_num} (rounded to {age_rounded}) is out of expected range")
+            return -1
+
+    except (ValueError, TypeError) as e:
+        print(f"Warning: Cannot convert age '{age}' to float: {e}")
+        return -1
 
 class WeightCalculationMixin:
     """

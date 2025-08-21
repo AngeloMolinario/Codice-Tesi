@@ -9,7 +9,7 @@ import torchvision.transforms as T
 import matplotlib.pyplot as plt
 from torchvision import transforms as T
 from torch.cuda.amp import autocast, GradScaler
-from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import os
 import numpy as np
@@ -107,22 +107,14 @@ def get_loss_fn(config, weights=None):
         weights = torch.ones(len(config.CLASSES[task]))
     if task == 0:
         return HybridOrdinalLossV2(num_classes=len(config.CLASSES[0]),
-                                    alpha=0.3,              # CORAL-adapted (leggera regolarizzazione ordinale)
-                                    beta=0.7,               # CE soft-target "peaked" (componente principale)
+                                    alpha=0.18,              # CORAL-adapted (leggera regolarizzazione ordinale)
+                                    beta=0.8,               # CE soft-target "peaked" (componente principale)
                                     gamma=0.02,              # EMD opzionale (0.02 se vuoi un filo più di ordinalità)
-                                    eta=0.30,               # mix hard/soft: mantiene picco netto sulla classe corretta
-                                    lambda_dist=1.609,      # ln(5): vicino diretto ≈ 20% del centro nel kernel
+                                    eta=0.25,               # mix hard/soft: mantiene picco netto sulla classe corretta
+                                    lambda_dist=1.0,      # ln(5): vicino diretto ≈ 20% del centro nel kernel
                                     support_radius=1,       # azzera target oltre ±2 classi (niente picchi lontani)
                                     temperature=None,
                                     class_weights=weights).to('cuda')
-        return HybridOrdinalLoss(num_classes=len(config.CLASSES[0]), class_weights=weights)
-        return OrdinalConcentratedLoss(num_classes=len(config.CLASSES[0]), weights=weights,
-                 alpha=2.5,
-                 ce_weight=2.5,
-                 w_far=10.0,      # Aumentiamo il peso per forzare probabilità zero lontano
-                 w_conc=10.0,     # Peso per il nuovo termine di concentrazione
-                 w_emd=1.5,
-                 eps=1e-8)
     elif task == 1:
         return CrossEntropyLoss(weights=weights)
     elif task == 2:
@@ -551,15 +543,7 @@ def main():
     # GradScaler for mixed precision
     scaler = GradScaler()
     # CosineAnnealingLR scheduler
-    # 1) Warm-up lineare: da 0 -> lr iniziale, in warmup_steps step
-    warmup = LinearLR(optimizer, start_factor=0.0, end_factor=1.0, total_iters=5)
-
-    # 2) Cosine decay: dal lr corrente fino a ~0, per i restanti step
-    cosine = CosineAnnealingLR(optimizer, T_max=10 - 5, eta_min=1e-8)
-
-    # 3) Catena: warmup poi cosine
-    scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
-
+    scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
     lr_history = [optimizer.param_groups[0]['lr']]
 
     print(f"\nLoaded Model: {type(model)}")
