@@ -47,7 +47,16 @@ class MultitaskTracker:
         data = {
             'loss': self.loss,
             'accuracy': self.accuracy,
-            'confusion_data': {k: [[(p.tolist(), l.tolist()) for (p, l) in v] for v in self.confusion_data[k]] for k in self.confusion_data},
+            'confusion_data': {
+                k: [
+                    [
+                        (p.tolist() if hasattr(p, 'tolist') else p, l.tolist() if hasattr(l, 'tolist') else l)
+                        for (p, l) in (v if isinstance(v, list) else [v])
+                    ]
+                    for v in self.confusion_data[k]
+                ]
+                for k in self.confusion_data
+            },
             'task_names': self.task_names,
             'class_names': self.class_names
         }
