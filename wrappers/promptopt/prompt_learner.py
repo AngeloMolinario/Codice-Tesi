@@ -111,7 +111,7 @@ class TaskPromptLearner(nn.Module):
         ctx_vectors = torch.empty(n_task, n_ctx, ctx_dim, dtype=dtype)
         nn.init.normal_(ctx_vectors, std=0.02)
 
-        prompt_prefix = " ".join(["X"] * n_ctx) # Generate the prompt placeholders for the tokenizer
+        prompt_prefix = " " + " ".join(["X"] * n_ctx) # Generate the prompt placeholders for the tokenizer
 
         if verbose:
             print(f'Initial context: "{prompt_prefix}"')

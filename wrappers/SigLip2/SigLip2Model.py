@@ -16,7 +16,8 @@ from transformers.modeling_outputs import BaseModelOutputWithPooling
 from transformers.models.siglip.modeling_siglip import SiglipOutput
 
 
-class SiglipModel(SiglipPreTrainedModel):
+class Siglip2Model(SiglipPreTrainedModel):
+
     config: SiglipConfig
 
     def __init__(self, config: SiglipConfig):
@@ -53,87 +54,64 @@ class SiglipModel(SiglipPreTrainedModel):
 
     def get_text_features(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
+        text, normalize: bool = False
     ) -> torch.FloatTensor:
 
-        # Use SigLIP model's config for some fields (if specified) instead of those of vision & text components.
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-
         text_outputs: BaseModelOutputWithPooling = self.text_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
+            input_ids=text,
+            attention_mask=None,
+            position_ids=None,
+            output_attentions=self.config.output_attentions,
+            output_hidden_states=self.config.output_hidden_states,
         )
 
         pooled_output = text_outputs.pooler_output
+
+        if normalize:
+            pooled_output = pooled_output / pooled_output.norm(p=2, dim=-1, keepdim=True)
 
         return pooled_output
 
     def get_image_features(
         self,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        interpolate_pos_encoding: bool = False,
+        image, normalize=False
     ) -> torch.FloatTensor:
         
-        # Use SiglipModel's config for some fields (if specified) instead of those of vision & text components.
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
 
         vision_outputs: BaseModelOutputWithPooling = self.vision_model(
-            pixel_values=pixel_values,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            interpolate_pos_encoding=interpolate_pos_encoding,
+            pixel_values=image,
+            output_attentions=self.config.output_attentions,
+            output_hidden_states=self.config.output_hidden_states,
+            interpolate_pos_encoding=None,
         )
 
         pooled_output = vision_outputs.pooler_output
-
+        if normalize:
+            pooled_output = pooled_output / pooled_output.norm(p=2, dim=-1, keepdim=True)
+            
         return pooled_output
 
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
         pixel_values: Optional[torch.FloatTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        return_loss: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        interpolate_pos_encoding: bool = False,
     ) -> SiglipOutput:
 
-        # Use SigLIP model's config for some fields (if specified) instead of those of vision & text components.
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
 
         vision_outputs: BaseModelOutputWithPooling = self.vision_model(
             pixel_values=pixel_values,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            interpolate_pos_encoding=interpolate_pos_encoding,
+            output_attentions=self.config.output_attentions,
+            output_hidden_states=self.config.output_hidden_states,
+            interpolate_pos_encoding=False,
         )
 
         text_outputs: BaseModelOutputWithPooling = self.text_model(
             input_ids=input_ids,
-            attention_mask=attention_mask,
+            attention_mask=None,
             position_ids=position_ids,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
+            output_attentions=self.config.output_attentions,
+            output_hidden_states=self.config.output_hidden_states,
         )
 
         image_embeds = vision_outputs.pooler_output
@@ -152,12 +130,6 @@ class SiglipModel(SiglipPreTrainedModel):
         logits_per_image = logits_per_text.t()
 
         loss = None
-        if return_loss:
-            eye = torch.eye(logits_per_text.size(0), device=logits_per_text.device)
-            m1_diag1 = -torch.ones_like(logits_per_text) + 2 * eye
-            loglik = torch.nn.functional.logsigmoid(m1_diag1 * logits_per_text)
-            nll = -torch.sum(loglik, dim=-1)
-            loss = nll.mean()
 
         return SiglipOutput(
             loss=loss,
