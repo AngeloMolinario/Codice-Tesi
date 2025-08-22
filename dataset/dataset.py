@@ -176,6 +176,8 @@ def map_age_to_group_(age):
         print(f"Warning: Cannot convert age '{age}' to float: {e}")
         return -1
 
+import torch
+
 class WeightCalculationMixin:
     """
     Mixin class to provide centralized weight calculation logic for datasets.
@@ -186,7 +188,7 @@ class WeightCalculationMixin:
     """
 
     def get_class_weights(self, task_idx: int):
-        """Compute class weights for the specified task index (0=age, 1=gender, 2=emotion)."""
+        """Compute inverse-frequency class weights for the specified task index (0=age, 1=gender, 2=emotion)."""
         if not hasattr(self, 'class_weights'):
             self.class_weights = {}
         if self.class_weights.get(task_idx) is not None:
@@ -225,6 +227,81 @@ class WeightCalculationMixin:
 
         return weights_tensor
 
+    # ---------------------- NEW: Effective Number (Cui et al. 2019) ----------------------
+    def get_class_weights_effective(self, task_idx: int, beta: float = 0.999, normalize: str = "per_sample"):
+        """
+        Class-Balanced weights via Effective Number:
+            w_c = (1 - beta) / (1 - beta^{n_c})
+
+        Args:
+            task_idx: indice del task (0=age, 1=gender, 2=emotion)
+            beta:    in [0.9, 0.9999]; più vicino a 1 => correzione più dolce
+            normalize:
+                - "per_sample": scala i pesi così che sum_c n_c * w_c = sum_c n_c (mean sample weight = 1)
+                - "mean1":      scala i pesi perché la media dei w_c sia 1
+                - "none":       nessuna normalizzazione
+
+        Returns:
+            torch.FloatTensor di shape [num_classi_presenti], ordinato per class index crescente.
+        """
+        if not hasattr(self, 'class_weights_effective'):
+            self.class_weights_effective = {}
+
+        cache_key = (task_idx, float(beta), str(normalize))
+        if self.class_weights_effective.get(cache_key) is not None:
+            return self.class_weights_effective[cache_key]
+
+        if self.verbose:
+            print(f"Computing EFFECTIVE-NUMBER class weights for task idx: {task_idx} "
+                  f"(beta={beta}, normalize='{normalize}', using {self.__class__.__name__})")
+
+        # Raccogli etichette del task
+        all_task_data = self._get_all_labels_for_task(task_idx)
+
+        # Conta le classi (ignorando -1)
+        class_counts = {}
+        total_valid_samples = 0
+        for value in all_task_data:
+            if value != -1:
+                class_counts[value] = class_counts.get(value, 0) + 1
+                total_valid_samples += 1
+
+        if total_valid_samples == 0:
+            if self.verbose:
+                print(f"Warning: No valid samples found for task idx {task_idx} in {self.__class__.__name__}")
+            return None
+
+        class_indices = sorted(class_counts.keys())
+        counts = torch.tensor([class_counts[c] for c in class_indices], dtype=torch.float32)
+
+        # w_c = (1 - beta) / (1 - beta^{n_c})
+        beta_t = torch.tensor(beta, dtype=torch.float32)
+        denom = (1.0 - torch.pow(beta_t, counts)).clamp_min(1e-12)
+        weights = (1.0 - beta_t) / denom  # [C]
+
+        # Normalizzazione
+        if normalize == "per_sample":
+            # Ensure sum_c n_c * w_c = sum_c n_c  (mean sample weight ~ 1)
+            scale = counts.sum() / (counts.mul(weights).sum().clamp_min(1e-12))
+            weights = weights * scale
+        elif normalize == "mean1":
+            weights = weights * (weights.numel() / weights.sum().clamp_min(1e-12))
+        elif normalize in ("none", None):
+            pass
+        else:
+            raise ValueError(f"Unknown normalize mode: {normalize}. Use 'per_sample', 'mean1', or 'none'.")
+
+        weights_tensor = weights.to(torch.float32)
+        self.class_weights_effective[cache_key] = weights_tensor
+
+        if self.verbose:
+            print(f"Class distribution (task {task_idx}): {dict(sorted(class_counts.items()))}")
+            print(f"Effective-number weights (task {task_idx}): {weights_tensor}  "
+                  f"[beta={beta}, normalize='{normalize}']")
+
+        return weights_tensor
+    # -------------------------------------------------------------------------------------
+
     def get_task_weights(self):
         """Compute task weights for multitask learning (order: [age, gender, emotion])."""
         if hasattr(self, 'task_weights') and self.task_weights is not None:
@@ -249,7 +326,6 @@ class WeightCalculationMixin:
             print(f"Task weights: {weights_tensor}")
 
         return weights_tensor
-
 
 import math
 import numpy as np
