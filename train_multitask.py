@@ -183,8 +183,8 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
             with torch.set_grad_enabled(config.NUM_VISUAL_PROMPT!=0):
                 image_features = model.get_image_features(image, normalize=True)
 
-            logits = model.logit_scale.exp() * (image_features @ text_features)
-
+            #logits = model.logit_scale.exp() * (image_features @ text_features)
+            logits = (image_features @ text_features)
             logits_by_task = torch.split(logits, logit_split, dim=1)  # tuple di view
 
             total_loss = 0.0
@@ -440,7 +440,8 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
             # --- abilita autocast per mixed precision ---
             with autocast():
                 image_features = model.get_image_features(image, normalize=True)
-                logits = model.logit_scale.exp() * (image_features @ text_features.T)
+                #logits = model.logit_scale.exp() * (image_features @ text_features.T)
+                logits = (image_features @ text_features.T)
                 logits_by_task = torch.split(logits, logit_split, dim=1)
 
                 total_loss = 0.0
@@ -691,6 +692,8 @@ def main():
     )
 
     weights_history = []
+
+    print(f"LOGIT SCALE: {model.logit_scale.item()}")
 
     for epoch in range(config.EPOCHS):
         
