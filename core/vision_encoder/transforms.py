@@ -20,7 +20,7 @@ def get_image_transform(
         ]
     
     return T.Compose(crop + [
-        T.Lambda(lambda x: x.convert("RGB")),
+        #T.Lambda(lambda x: x.convert("RGB")),
         T.ToTensor(),
         T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True),
     ])
