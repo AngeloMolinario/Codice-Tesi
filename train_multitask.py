@@ -103,15 +103,12 @@ def get_dataset(config, split, transform=None, augmentation_transform=None):
 
 def get_loss_fn(config, weights=None):    
     # Solo multitask
-    age_loss = OrdinalConcentratedLoss(
-            num_classes=9,
-            weights=weights[0],                 # se li usi
-            widths=[3,7,10,10,10,10,10,10,25],     # come ora
-            alpha=2.5, ce_weight=1.5,
-            w_far=20.0, w_conc=10.0, w_emd=1.5,
-            w_peak=3.0,            # nuovo termine
-            delta_peak=0.12        # margine locale
-        )
+    age_loss = OrdinalPeakLossImbalance(
+                num_classes=9,
+                class_weights=weights[0],
+                ce_coef=1.0, emd_coef=0.6, margin_coef=0.4, entropy_coef=0.02,
+                margin=0.05, focal_gamma=1.5
+            ).cuda()
     gender_loss = CrossEntropyLoss(weights=weights[1])
     emotion_loss = CrossEntropyLoss(weights=weights[2])
     loss = [
@@ -695,21 +692,9 @@ def main():
 
     weights_history = []
 
-    alpha_max = 3.5
-    warmup_epochs = 6 # porta la CE in primo piano nelle prime epoche
-    def compute_alpha(e):
-        if e < warmup_epochs:
-            return alpha_max * (e + 1) / warmup_epochs
-        return alpha_max
-
-    alpha_history = []
-
     for epoch in range(config.EPOCHS):
-        alpha_t = compute_alpha(epoch)
-        if hasattr(loss_fn, "set_alpha"):
-            loss_fn.set_alpha(float(alpha_t))
-        alpha_history.append(float(alpha_t))
-        print(f"[Epoch {epoch+1}] alpha={alpha_t:.3f}", flush=True)
+        
+        print(f"[Epoch {epoch+1}]", flush=True)
         w = []
         for i in range(num_tasks):
             w_i = running_mean.get_by_index(i)
@@ -808,5 +793,7 @@ def main():
         plt.tight_layout()
         plt.savefig(os.path.join(config.OUTPUT_DIR, 'task_weights_per_epoch.png'))
         plt.close()
+
+
 if __name__ == "__main__":
     main()

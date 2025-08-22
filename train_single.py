@@ -106,15 +106,12 @@ def get_loss_fn(config, weights=None):
     if weights is None:
         weights = torch.ones(len(config.CLASSES[task]))
     if task == 0:
-        return HybridOrdinalLossV2(num_classes=len(config.CLASSES[0]),
-                                    alpha=0.18,              # CORAL-adapted (leggera regolarizzazione ordinale)
-                                    beta=0.8,               # CE soft-target "peaked" (componente principale)
-                                    gamma=0.02,              # EMD opzionale (0.02 se vuoi un filo più di ordinalità)
-                                    eta=0.25,               # mix hard/soft: mantiene picco netto sulla classe corretta
-                                    lambda_dist=1.0,      # ln(5): vicino diretto ≈ 20% del centro nel kernel
-                                    support_radius=1,       # azzera target oltre ±2 classi (niente picchi lontani)
-                                    temperature=None,
-                                    class_weights=weights).to('cuda')
+        return OrdinalPeakLossImbalance(
+                num_classes=9,
+                class_weights=weights,
+                ce_coef=1.0, emd_coef=0.6, margin_coef=0.4, entropy_coef=0.02,
+                margin=0.05, focal_gamma=1.0
+            ).cuda()
     elif task == 1:
         return CrossEntropyLoss(weights=weights)
     elif task == 2:
@@ -491,6 +488,8 @@ def main():
     # Get the model
     model = get_model(config).to(DEVICE)
 
+    print(f"MODEL LOGIT SCALE {model.logit_scale}")
+
     # Get the training and validation dataset
     training_set = get_dataset(config=config,
                                split="train",
@@ -543,7 +542,7 @@ def main():
     # GradScaler for mixed precision
     scaler = GradScaler()
     # CosineAnnealingLR scheduler
-    scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
+    scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS*3, eta_min=1e-6)
     lr_history = [optimizer.param_groups[0]['lr']]
 
     print(f"\nLoaded Model: {type(model)}")
@@ -589,7 +588,7 @@ def main():
         )
         print(f"Text prompts: {config.TEXT_CLASSES_PROMPT[config.TASK]}")
         print(f"Text features shape: {text_features.shape}")
-
+    loss_fn.eval()
     print(f"\n[Epoch 0 - VAL]", flush=True)
     val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, None, config, text_features)
     print(f"  Task '{task_names[0]}': Loss = {val_loss[0]:.4f}, Accuracy = {val_acc[0]:.4f}")
@@ -614,11 +613,13 @@ def main():
         alpha_history.append(float(alpha_t))
         print(f"[Epoch {epoch+1}] alpha={alpha_t:.3f}", flush=True)
         weights_history.append(1.0)  # Only one task
+
+        loss_fn.train()
         train_loss, train_acc = train_fn(model, train_loader, optimizer, None, loss_fn, DEVICE, None, config, text_features, scaler)
         print(f"  Task '{task_names[0]}': Loss = {train_loss[0]:.4f}, Accuracy = {train_acc[0]:.4f}")
         tracker.update_loss(0, train_loss[0], train=True)
         tracker.update_accuracy(0, train_acc[0], train=True)
-
+        loss_fn.eval()
         # Validation
         print(f"\n[Epoch {epoch+1} - VAL]", flush=True)
         val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, None, config, text_features)
