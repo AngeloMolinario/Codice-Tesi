@@ -103,12 +103,12 @@ def get_dataset(config, split, transform=None, augmentation_transform=None):
 
 def get_loss_fn(config, weights=None):    
     # Solo multitask
-    age_loss = OrdinalPeakLossImbalance(
-                num_classes=9,
-                class_weights=weights[0],
-                ce_coef=1.0, emd_coef=0.6, margin_coef=0.4, entropy_coef=0.02,
-                margin=0.05, focal_gamma=1.5
-            ).cuda()
+    age_loss = CrossEntropyMAELoss(
+        bin_centers=[1.5, 6.5, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 80.0],
+        class_weights=weights[0],
+        alpha=0.3,
+        scale=13.0
+    )
     gender_loss = CrossEntropyLoss(weights=weights[1])
     emotion_loss = CrossEntropyLoss(weights=weights[2])
     loss = [
@@ -533,12 +533,12 @@ def main():
 
     ################## Get the training and validation dataset ##################################
     training_set =  get_dataset(config=config,
-                               split="train",
+                               split="val",
                                transform=get_image_transform(config),
                                augmentation_transform=get_augmentation_transform(config)
                                )
     validation_set = get_dataset(config=config,
-                                 split="val",
+                                 split="test",
                                  transform=get_image_transform(config)
                                 )
 
@@ -570,7 +570,7 @@ def main():
 
     ################ Get the loss function #####################################################
 
-    weights = [training_set.get_class_weights(i).to(DEVICE) for i in range(3)]
+    weights = [training_set.get_class_weights_effective(i).to(DEVICE) for i in range(3)]
     loss_fn = get_loss_fn(config, weights=weights)
 
     ####################### CREATE OPTIMIZER ###################################################
