@@ -1,9 +1,9 @@
 {
     "TUNING" : "vpt",
-    "MODEL"  : "PECore",
+    "MODEL"  : "siglip2",
     "TASK"   : 0,
 
-    "NUM_VISUAL_PROMPT" : 40,
+    "NUM_VISUAL_PROMPT" : 30,
     "NUM_TEXT_CNTX" : 0,
     "TASK_NAMES": ["age estimation", "gender recognition", "emotion classification"],
     "CLASSES": [
@@ -49,16 +49,17 @@
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
-    "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
+    "DATASET_ROOT": "../datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 100,
-    "NUM_WORKERS" : 8,
-    "PREFETCH_FACTOR" : 1,
+    "BATCH_SIZE" : 32,
+    "NUM_WORKERS" : 1,
+    "PREFETCH_FACTOR" : 3,
     "LR" : 3e-3,
-    "OUTPUT_DIR" : "../TRAIN_AGE/CORAL_NEW_OPROMPT50",
+    "OUTPUT_DIR" : "../TRAIN_AGE/siglip2",
     "VERBOSE": true,
     "USE_TQDM":true,
     "EPOCHS" : 10,    
-    "TASK_WEIGHTS" : [1.0, 1.0, 1.0]
+    "TASK_WEIGHTS" : [1.0, 1.0, 1.0],
+    "SCALE" : 10.0
 
 }

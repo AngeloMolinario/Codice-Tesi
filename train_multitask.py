@@ -19,6 +19,8 @@ import seaborn as sns
 from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
+from wrappers.SigLip2.SigLip2Model import Siglip2Model
+from transformers import AutoConfig
 from training import training_functions
 from training.loss import *
 from core.vision_encoder import transforms
@@ -41,8 +43,8 @@ def get_model(config):
                 model=base_model,
                 tokenizer=transforms.get_text_tokenizer(base_model.text_model.context_length)
             )
-
             return model
+        
         elif model_name == "siglip2":
             raise NotImplementedError(f"Model {model_name} is not implemented for VPT tuning.")
         else:
@@ -52,8 +54,15 @@ def get_model(config):
         if model_name == "pecore":
             model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
             return model
+        
         elif model_name == "siglip2":
-            raise NotImplementedError(f"Model {model_name} is not implemented for VPT tuning.")
+            model = Siglip2Model(
+                config = AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                num_prompts=config.NUM_VISUAL_PROMPT
+            )
+            model.load_model(path="./hf_models/model.pth", map_location="cpu")
+            return model
+        
         else:
             raise ValueError(f"Unknown model name: {model_name}")
     
@@ -104,11 +113,11 @@ def get_dataset(config, split, transform=None, augmentation_transform=None):
 def get_loss_fn(config, weights=None):    
     # Solo multitask
     age_loss = CrossEntropyMAELoss(
-        bin_centers=[1.5, 6.5, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 80.0],
-        class_weights=weights[0],
+        bin_centers=torch.tensor([1.5, 6.5, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 80.0]).to('cuda'),
+        class_weights=weights[0].to('cuda'),
         alpha=0.3,
-        scale=13.0
-    )
+        scale=15.0
+    ).to('cuda')
     gender_loss = CrossEntropyLoss(weights=weights[1])
     emotion_loss = CrossEntropyLoss(weights=weights[2])
     loss = [
@@ -123,8 +132,12 @@ def get_image_transform(config):
     if model_name == 'pecore':
         return transforms.get_image_transform(224)
     elif model_name == 'siglip2':
-        raise NotImplementedError(f"Image transform for model {model_name} is not implemented.")
-    
+        return T.Compose([
+            T.Resize((224, 224)),
+            T.ToTensor(),
+            T.Normalize([0.5,0.5,0.5], [0.5,0.5,0.5])
+        ])
+
     raise ValueError(f"Unknown model name: {model_name}")
 
 def get_augmentation_transform(config):
@@ -533,12 +546,12 @@ def main():
 
     ################## Get the training and validation dataset ##################################
     training_set =  get_dataset(config=config,
-                               split="val",
+                               split="train",
                                transform=get_image_transform(config),
                                augmentation_transform=get_augmentation_transform(config)
                                )
     validation_set = get_dataset(config=config,
-                                 split="test",
+                                 split="val",
                                  transform=get_image_transform(config)
                                 )
 

@@ -24,11 +24,7 @@ class CustomSiglipTextTransformer(nn.Module):
         self.final_layer_norm = nn.LayerNorm(embed_dim, eps=config.layer_norm_eps)
 
         self.head = nn.Linear(embed_dim, config.projection_size)
-        self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
-
-        # Add the logic for the prompt learner
-        prompt_learner = nn.Parameter(torch.randn(100, embed_dim))
-        self.register_parameter("prompt_learner", prompt_learner)
+        self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"        
 
     def forward(
         self,
@@ -86,6 +82,10 @@ class SiglipTextModel(SiglipPreTrainedModel):
         super().__init__(config)
         self.text_model = CustomSiglipTextTransformer(config)
         self.post_init()
+
+    def load_state_dict(self, state_dict, strict=True):
+        """Load the state dictionary into the text model."""
+        return self.text_model.load_state_dict(state_dict, strict=strict)
 
     def get_input_embeddings(self) -> nn.Module:
         return self.text_model.embeddings.token_embedding

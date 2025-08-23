@@ -26,6 +26,9 @@ from training.training_functions import *
 from utils.metric import MultitaskTracker
 from utils.configuration import Config
 
+from wrappers.SigLip2.SigLip2Model import Siglip2Model
+from transformers import AutoConfig, AutoTokenizer
+
 def get_model(config):
     ''' This method look at the configuration file and return the correct model initialized with pretrained weights and the specified attributes'''
     tuning = config.TUNING.lower()
@@ -53,7 +56,12 @@ def get_model(config):
             model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
             return model
         elif model_name == "siglip2":
-            raise NotImplementedError(f"Model {model_name} is not implemented for VPT tuning.")
+            model = Siglip2Model(
+                config = AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                num_prompts=config.NUM_VISUAL_PROMPT
+            )
+            model.load_model(path="./hf_models/model.pth", map_location="cpu")
+            return model
         else:
             raise ValueError(f"Unknown model name: {model_name}")
     
@@ -61,7 +69,14 @@ def get_model(config):
         raise NotImplementedError(f"Model {model_name} is not implemented for VVPT tuning.")
     else:
         raise ValueError(f"Unknown tuning method: {tuning}")
-
+    
+def get_tokenizer(config):
+    if config.MODEL.lower() == 'pecore':        
+        return transforms.get_text_tokenizer(32)
+    elif config.MODEL.lower() == 'siglip2':
+        tokenizer = AutoTokenizer.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
+        return tokenizer
+    
 def get_dataset(config, split, transform=None, augmentation_transform=None):
 
     balance_task = None
@@ -106,12 +121,15 @@ def get_loss_fn(config, weights=None):
     if weights is None:
         weights = torch.ones(len(config.CLASSES[task]))
     if task == 0:
-        return OrdinalPeakLossImbalance(
-                num_classes=9,
-                class_weights=weights,
-                ce_coef=1.0, emd_coef=0.6, margin_coef=0.4, entropy_coef=0.02,
-                margin=0.05, focal_gamma=1.0
-            ).cuda()
+        bin_centers = torch.tensor([1.0, 6.0, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 75.0], dtype=torch.float32).cuda()
+
+        return CrossEntropyOrdinalLoss(
+            bin_centers=bin_centers,
+            scale=config.SCALE,
+            beta=0.5,
+            p=2,                 # ordinale tipo Wasserstein-2
+            reduction="mean",
+        )
     elif task == 1:
         return CrossEntropyLoss(weights=weights)
     elif task == 2:
@@ -124,8 +142,11 @@ def get_image_transform(config):
     if model_name == 'pecore':
         return transforms.get_image_transform(224)
     elif model_name == 'siglip2':
-        raise NotImplementedError(f"Image transform for model {model_name} is not implemented.")
-    
+        return T.Compose([
+                    T.Resize((224, 224)),
+                    T.ToTensor(),
+                    T.Normalize([0.5,0.5,0.5], [0.5,0.5,0.5])
+                ])    
     raise ValueError(f"Unknown model name: {model_name}")
 
 def get_augmentation_transform(config):
@@ -141,7 +162,7 @@ def get_augmentation_transform(config):
     if model_name == 'pecore':
         tform.append(T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True))
     elif model_name == 'siglip2':
-        raise NotImplementedError(f"Augmentation transform for model {model_name} is not implemented.")
+        tform.append(T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True))
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     
@@ -354,7 +375,7 @@ def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, de
         # Use mixed precision on CUDA when available
         with autocast():
             image_features = model.get_image_features(image, normalize=True)
-            logits = scale * (image_features @ text_features)
+            logits =  (image_features @ text_features)
             loss, pred = loss_fn(logits, labels, return_predicted_label=True)
         
         optimizer.zero_grad(set_to_none=True)
@@ -414,10 +435,10 @@ def single_task_val_fn(model, dataloader, loss_fn, device, task_weight, config, 
             # Use mixed precision during validation forward pass on CUDA
             with autocast():
                 image_features = model.get_image_features(image, normalize=True)
-                logits = model.logit_scale.exp() * (image_features @ text_features.T)
+                logits = (image_features @ text_features.T)
 
                 # Calcola probabilità, loss e predizioni
-                probs = torch.softmax(logits, dim=1)
+                probs = torch.softmax(logits*config.SCALE, dim=1)
                 loss, pred = loss_fn(logits, labels, return_predicted_label=True)
             total_loss_sum += loss.detach()
             preds_list.append(pred.detach())
@@ -523,7 +544,7 @@ def main():
     )
 
     # Get the loss function
-    weights = training_set.get_class_weights(int(config.TASK)).to(DEVICE)
+    weights = training_set.get_class_weights_effective(int(config.TASK)).to(DEVICE)
     loss_fn = get_loss_fn(config, weights=weights)
 
     # Create optimizer
@@ -578,8 +599,8 @@ def main():
 
     text_features = None
     if config.TUNING.lower() != 'softcpt':
-        tokenizer = transforms.get_text_tokenizer(model.text_model.context_length)
-        text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK]).to(DEVICE)
+        tokenizer = get_tokenizer(config)
+        text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK], return_tensors="pt", padding='max_length', max_length=32, truncation=True)['input_ids'].to(DEVICE)
         text_features = model.get_text_features(text=text, normalize=True)
         model.save(
             save_path=os.path.join(config.OUTPUT_DIR, f"ckpt/initial_model.pt"),
