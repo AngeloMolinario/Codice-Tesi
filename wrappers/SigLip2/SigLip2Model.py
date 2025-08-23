@@ -127,6 +127,11 @@ class Siglip2Model(SiglipPreTrainedModel):
             print("[WARNING] The loaded models have unexpected keys:")
             for k in result.unexpected_keys:
                 print(f"  {k}")
+
+        
+        print(f"LOGIT SCALE: {self.logit_scale} - exp {self.logit_scale.exp()}")
+        print(f"LOGIT BIAS: {self.logit_bias}")
+
         return result
 
     def get_text_features(self, text, normalize=False):

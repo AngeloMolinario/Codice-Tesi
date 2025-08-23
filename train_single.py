@@ -375,7 +375,7 @@ def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, de
         # Use mixed precision on CUDA when available
         with autocast():
             image_features = model.get_image_features(image, normalize=True)
-            logits =  (image_features @ text_features)
+            logits =  model.logit_scale.exp() *(image_features @ text_features) + model.logit_bias
             loss, pred = loss_fn(logits, labels, return_predicted_label=True)
         
         optimizer.zero_grad(set_to_none=True)
@@ -435,10 +435,11 @@ def single_task_val_fn(model, dataloader, loss_fn, device, task_weight, config, 
             # Use mixed precision during validation forward pass on CUDA
             with autocast():
                 image_features = model.get_image_features(image, normalize=True)
-                logits = (image_features @ text_features.T)
+                #logits = (image_features @ text_features.T)
+                logits =  model.logit_scale.exp() *(image_features @ text_features.T) + model.logit_bias
 
                 # Calcola probabilità, loss e predizioni
-                probs = torch.softmax(logits*config.SCALE, dim=1)
+                probs = torch.softmax(logits, dim=1)
                 loss, pred = loss_fn(logits, labels, return_predicted_label=True)
             total_loss_sum += loss.detach()
             preds_list.append(pred.detach())
@@ -609,7 +610,6 @@ def main():
         )
         print(f"Text prompts: {config.TEXT_CLASSES_PROMPT[config.TASK]}")
         print(f"Text features shape: {text_features.shape}")
-    loss_fn.eval()
     print(f"\n[Epoch 0 - VAL]", flush=True)
     val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, None, config, text_features)
     print(f"  Task '{task_names[0]}': Loss = {val_loss[0]:.4f}, Accuracy = {val_acc[0]:.4f}")
@@ -617,31 +617,19 @@ def main():
     tracker.save_confusion_matrices(100)
     tracker.save()
 
-    weights_history = []
-    alpha_max = 4.5
-    warmup_epochs = 6 # porta la CE in primo piano nelle prime epoche
-    def compute_alpha(e):
-        if e < warmup_epochs:
-            return alpha_max * (e + 1) / warmup_epochs
-        return alpha_max
-
-    alpha_history = []
 
     for epoch in range(config.EPOCHS):
-        alpha_t = compute_alpha(epoch)
-        if hasattr(loss_fn, "set_alpha"):
-            loss_fn.set_alpha(float(alpha_t))
-        alpha_history.append(float(alpha_t))
-        print(f"[Epoch {epoch+1}] alpha={alpha_t:.3f}", flush=True)
-        weights_history.append(1.0)  # Only one task
 
-        loss_fn.train()
+
+        ################## TRAINING LOOP ##################
+        print(f"[Epoch {epoch+1} - TRAIN]", flush=True)
         train_loss, train_acc = train_fn(model, train_loader, optimizer, None, loss_fn, DEVICE, None, config, text_features, scaler)
         print(f"  Task '{task_names[0]}': Loss = {train_loss[0]:.4f}, Accuracy = {train_acc[0]:.4f}")
         tracker.update_loss(0, train_loss[0], train=True)
         tracker.update_accuracy(0, train_acc[0], train=True)
-        loss_fn.eval()
-        # Validation
+
+
+        ################## VALIDATION LOOP ##################
         print(f"\n[Epoch {epoch+1} - VAL]", flush=True)
         val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, None, config, text_features)
         print(f"  Task '{task_names[0]}': Loss = {val_loss[0]:.4f}, Accuracy = {val_acc[0]:.4f}")
@@ -650,17 +638,17 @@ def main():
         tracker.update_confusion(0, all_preds_list[0], all_labels_list[0], epoch)
 
         # Age analysis and save avg_probs matrix to match multitask outputs
-        epoch_analysis_dir = os.path.join(config.OUTPUT_DIR, "age_analysis", f"epoch_{epoch+1}")
+        epoch_analysis_dir = os.path.join(config.OUTPUT_DIR, config.TASK_NAMES[config.TASK].replace(" ", "_"), f"epoch_{epoch+1}")
         analyze_age_errors(
             all_preds_list, all_labels_list, all_probs_list,
-            class_names=config.CLASSES[0],
+            class_names=config.CLASSES[config.TASK],
             task_names=task_names,
             accuracies=val_acc,
             output_dir=epoch_analysis_dir
         )
         labels = all_labels_list[0].numpy()
         probs = all_probs_list[0].numpy()
-        num_classes = len(config.CLASSES[0])
+        num_classes = len(config.CLASSES[config.TASK])
         avg_probs_per_class = []
         for c in range(num_classes):
             mask = labels == c
@@ -670,8 +658,8 @@ def main():
                 avg_probs_per_class.append(np.zeros(num_classes))
         avg_probs_per_class = numpy.array(avg_probs_per_class)  # [num_classes, num_classes]
         numpy.save(os.path.join(epoch_analysis_dir, "avg_probs_matrix.npy"), avg_probs_per_class)
-        base_dir = os.path.join(config.OUTPUT_DIR, "age_analysis")
-        plot_prob_evolution(base_dir, config.CLASSES[0])
+        base_dir = os.path.join(config.OUTPUT_DIR, config.TASK_NAMES[config.TASK].replace(" ","_"))
+        plot_prob_evolution(base_dir, config.CLASSES[config.TASK])
 
         tracker.save_confusion_matrices(epoch)
         tracker.plot_losses()
@@ -698,6 +686,7 @@ def main():
         if epochs_without_improvement >= patience:
             print("Early stopping triggered.")
             break
+
         if config.TUNING.lower() == "softcpt":
             model.save_text_features(
                 text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/latest_soft_cpt_text_features.pt"),
