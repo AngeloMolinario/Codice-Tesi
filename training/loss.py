@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Sequence, Optional
 
-class CrossEntropyOrdinalLoss(nn.Module):
+class CrossEntropyOrdinalLoss_(nn.Module):
     def __init__(self, bin_centers, scale=1.0, beta=0.5, class_weights=None, reduction="mean", p=1):
         super().__init__()
         self.register_buffer("bin_centers", torch.as_tensor(bin_centers, dtype=torch.float32))
@@ -43,6 +43,58 @@ class CrossEntropyOrdinalLoss(nn.Module):
             loss = loss.sum()
 
         return (loss, logits.argmax(dim=1)) if return_predicted_label else loss
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class CrossEntropyOrdinalLoss(nn.Module):
+    def __init__(self, bin_centers, scale=1.0, beta=0.1, class_weights=None,
+                 reduction="mean", p=1, normalize_dist=True):
+        super().__init__()
+        self.register_buffer("bin_centers", torch.as_tensor(bin_centers, dtype=torch.float32))
+        self.scale = float(scale)
+        self.beta = float(beta)
+        self.p = int(p)                 # 1 = L1 (consigliato), 2 = L2
+        self.normalize_dist = bool(normalize_dist)
+        self.reduction = reduction
+
+        self.class_weights = None if class_weights is None else class_weights.to(torch.float32)
+        self.ce = nn.CrossEntropyLoss(weight=self.class_weights, reduction="none")
+
+    def forward(self, logits, target, return_predicted_label: bool = False):
+        # CE (massimizza accuracy)
+        z = logits * self.scale
+        ce_loss = self.ce(z, target)            # [N]
+
+        # Penalità ordinale (distanza dal centro del bin target)
+        probs = F.softmax(z, dim=-1)            # [N, C]
+        c = self.bin_centers                    # [C]
+        c_y = c[target].unsqueeze(1)            # [N, 1]
+        dist = (c.view(1, -1) - c_y).abs()      # [N, C]
+
+        if self.normalize_dist:
+            span = (c.max() - c.min()).clamp_min(1e-6)
+            dist = dist / span                  # ora in ~[0, 1]
+
+        if self.p == 2:
+            dist = dist ** 2
+
+        ord_pen = (probs * dist).sum(dim=1)     # E[|c_k - c_y|^p]  [N]
+
+        if self.class_weights is not None:
+            ord_pen = ord_pen * self.class_weights[target]
+
+        loss = ce_loss + self.beta * ord_pen
+
+        if self.reduction == "mean":
+            loss = loss.mean()
+        elif self.reduction == "sum":
+            loss = loss.sum()
+
+        return (loss, logits.argmax(dim=1)) if return_predicted_label else loss
+
 
 class CrossEntropyLoss():
     def __init__(self, weights=None):

@@ -63,7 +63,7 @@ class Siglip2Model(SiglipPreTrainedModel):
         self.config = config    
         text_config = config.text_config
         vision_config = config.vision_config
-
+        print(config)
         # Initialize the text and vision models with the number of prompts
         self.text_model = SiglipTextModel(text_config)
         # If num prompt is 0 than the model is the pure baseline

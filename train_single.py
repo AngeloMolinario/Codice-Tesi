@@ -122,11 +122,11 @@ def get_loss_fn(config, weights=None):
         weights = torch.ones(len(config.CLASSES[task]))
     if task == 0:
         bin_centers = torch.tensor([1.0, 6.0, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 75.0], dtype=torch.float32).cuda()
-
+        return CrossEntropyLoss(weights=weights)
         return CrossEntropyOrdinalLoss(
             bin_centers=bin_centers,
             scale=config.SCALE,
-            beta=0.5,
+            beta=0.1,
             p=2,                 # ordinale tipo Wasserstein-2
             reduction="mean",
         )
