@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as T
 import matplotlib.pyplot as plt
 from torchvision import transforms as T
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import os
@@ -373,7 +373,7 @@ def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, de
         scale = model.logit_scale.exp()
 
         # Use mixed precision on CUDA when available
-        with autocast():
+        with autocast(device_type=device):
             image_features = model.get_image_features(image, normalize=True)
             logits =  model.logit_scale.exp() *(image_features @ text_features) + model.logit_bias
             loss, pred = loss_fn(logits, labels, return_predicted_label=True)
@@ -433,7 +433,7 @@ def single_task_val_fn(model, dataloader, loss_fn, device, task_weight, config, 
                 text_features = model.get_text_features(normalize=True)
 
             # Use mixed precision during validation forward pass on CUDA
-            with autocast():
+            with autocast(device_type=device):
                 image_features = model.get_image_features(image, normalize=True)
                 #logits = (image_features @ text_features.T)
                 logits =  model.logit_scale.exp() *(image_features @ text_features.T) + model.logit_bias
@@ -562,7 +562,7 @@ def main():
     optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=1e-4)
 
     # GradScaler for mixed precision
-    scaler = GradScaler()
+    scaler = GradScaler(device=DEVICE)
     # CosineAnnealingLR scheduler
     scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS*3, eta_min=1e-6)
     lr_history = [optimizer.param_groups[0]['lr']]
