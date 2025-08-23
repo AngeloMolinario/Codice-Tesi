@@ -369,13 +369,19 @@ def single_task_train_fn(model, dataloader, optimizer, running_mean, loss_fn, de
         
         image = image.to(device, non_blocking=True)
         labels = label[:, config.TASK].to(device, non_blocking=True)
-                                        
-        scale = model.logit_scale.exp()
+        
+        scale = 1.0
+        if hasattr(model, 'logit_scale'):
+            scale = model.logit_scale.exp()
 
+        bias = 0.0
+        if hasattr(model, 'logit_bias'):
+            bias = model.logit_bias
+        
         # Use mixed precision on CUDA when available
         with autocast(device_type=device):
             image_features = model.get_image_features(image, normalize=True)
-            logits =  model.logit_scale.exp() *(image_features @ text_features) + model.logit_bias
+            logits =  scale * (image_features @ text_features) + bias
             loss, pred = loss_fn(logits, labels, return_predicted_label=True)
         
         optimizer.zero_grad(set_to_none=True)
@@ -432,11 +438,21 @@ def single_task_val_fn(model, dataloader, loss_fn, device, task_weight, config, 
             if compute_text_features:
                 text_features = model.get_text_features(normalize=True)
 
+
+            scale = 1.0
+            if hasattr(model, 'logit_scale'):
+                scale = model.logit_scale.exp()
+
+            bias = 0.0
+            if hasattr(model, 'logit_bias'):
+                bias = model.logit_bias
+
             # Use mixed precision during validation forward pass on CUDA
             with autocast(device_type=device):
+
                 image_features = model.get_image_features(image, normalize=True)
                 #logits = (image_features @ text_features.T)
-                logits =  model.logit_scale.exp() *(image_features @ text_features.T) + model.logit_bias
+                logits =  scale *(image_features @ text_features.T) + bias
 
                 # Calcola probabilità, loss e predizioni
                 probs = torch.softmax(logits, dim=1)
@@ -508,7 +524,7 @@ def main():
     shutil.copy2(configuration_path, f'{config.OUTPUT_DIR}/training_configuration.json')
 
     # Get the model
-    model = get_model(config).to(DEVICE)
+    model = get_model(config).to(DEVICE)    
 
     print(f"MODEL LOGIT SCALE {model.logit_scale}")
 
@@ -545,7 +561,7 @@ def main():
     )
 
     # Get the loss function
-    weights = training_set.get_class_weights_effective(int(config.TASK)).to(DEVICE)
+    weights = training_set.get_class_weights_effective(int(config.TASK), normalize="mean1").to(DEVICE)
     loss_fn = get_loss_fn(config, weights=weights)
 
     # Create optimizer
@@ -601,7 +617,10 @@ def main():
     text_features = None
     if config.TUNING.lower() != 'softcpt':
         tokenizer = get_tokenizer(config)
-        text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK], return_tensors="pt", padding='max_length', max_length=32, truncation=True)['input_ids'].to(DEVICE)
+        if config.MODEL.lower == 'siglip2':
+            text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK], return_tensors="pt", padding='max_length', max_length=32, truncation=True)['input_ids'].to(DEVICE)
+        else:
+            text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK]).to(DEVICE)
         text_features = model.get_text_features(text=text, normalize=True)
         model.save(
             save_path=os.path.join(config.OUTPUT_DIR, f"ckpt/initial_model.pt"),
