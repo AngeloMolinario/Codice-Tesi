@@ -706,6 +706,8 @@ def main():
 
     weights_history = []
 
+    print(f"LOGIT SCALE: {model.logit_scale.item()}")
+
     for epoch in range(config.EPOCHS):
         
         print(f"[Epoch {epoch+1}]", flush=True)
