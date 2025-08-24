@@ -8,16 +8,16 @@ class VisionPromptLearner(nn.Module):
     def __init__(self, num_prompt: int, emb_size: int, is_cls_present: bool = False):
         super().__init__()
         self.num_prompt = num_prompt
-        self.emb_size = emb_size
-        self.prompt_tokens = nn.Parameter(torch.zeros(num_prompt, emb_size))
-        torch.nn.init.normal_(self.prompt_tokens, std=0.02)  # Initialize with normal distribution
+        self.emb_size = emb_size        
+        self.prompt_tokens = nn.Parameter(torch.randn(num_prompt, emb_size))
+        self.prompt_position_embeddings = nn.Parameter(torch.randn(num_prompt, emb_size))        
         self.is_cls_present = is_cls_present
 
     def forward(self, x):
         batch_size = x.shape[0]
 
         cntx = self.prompt_tokens.unsqueeze(0).expand(batch_size, -1, -1) # [B, num_prompt, D]
-
+        cntx = cntx + self.prompt_position_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
         if not self.is_cls_present:
             x = torch.cat([cntx, x], dim=1)
         else:

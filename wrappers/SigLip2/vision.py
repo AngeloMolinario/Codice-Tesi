@@ -25,7 +25,7 @@ class CustomSiglipVisionTransformer(nn.Module):
         
         self.embeddings = SiglipVisionEmbeddings(config)
 
-        # Add here the Prompt Learner if needed
+        # Add the Prompt Learner if needed
         self.num_prompt = num_prompt
         if num_prompt > 0:
             self.prompt_learner = VisionPromptLearner(num_prompt=num_prompt, emb_size=config.hidden_size, is_cls_present=False)  # Uncomment if using a prompt learner
@@ -54,7 +54,7 @@ class CustomSiglipVisionTransformer(nn.Module):
 
         if self.num_prompt > 0:
             hidden_states = self.prompt_learner(hidden_states)
-        
+
         encoder_outputs: BaseModelOutput = self.encoder(
             inputs_embeds=hidden_states,
             output_attentions=output_attentions,
@@ -63,8 +63,10 @@ class CustomSiglipVisionTransformer(nn.Module):
 
         last_hidden_state = encoder_outputs.last_hidden_state
         last_hidden_state = self.post_layernorm(last_hidden_state)
-
-        pooler_output = self.head(last_hidden_state) if self.use_head else None
+        if self.use_head:         
+            pooler_output = self.head(last_hidden_state)
+        else:
+            pooler_output = None
 
         return BaseModelOutputWithPooling(
             last_hidden_state=last_hidden_state,
@@ -72,8 +74,6 @@ class CustomSiglipVisionTransformer(nn.Module):
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
         )
-
-
 
 class SiglipVisionModel(SiglipPreTrainedModel):
     config: SiglipVisionConfig

@@ -122,14 +122,20 @@ def get_loss_fn(config, weights=None):
         weights = torch.ones(len(config.CLASSES[task]))
     if task == 0:
         bin_centers = torch.tensor([1.0, 6.0, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 75.0], dtype=torch.float32).cuda()
-        return CrossEntropyLoss(weights=weights)
-        return CrossEntropyOrdinalLoss(
-            bin_centers=bin_centers,
-            scale=config.SCALE,
-            beta=0.1,
-            p=2,                 # ordinale tipo Wasserstein-2
-            reduction="mean",
-        )
+        return CrossEntropyOrdinalLoss2(
+                bin_centers=bin_centers,
+                scale=1.0,            # aumenta il gap dei logit
+                beta_ord=0.1,         # penalità ordinale "soft"
+                p=1,
+                normalize_dist=True,
+                class_weights=weights,   # opzionale
+                gamma=2.0,            # focal: picco netto sulla classe vera
+                lambda_rank=1.0,      # ranking ordinale (gap minimo)
+                margin=0.5,
+                rank_power=1,
+                only_adjacent=True,   # ranking solo con vicini: stabile ed efficace
+                reduction="mean",
+            )
     elif task == 1:
         return CrossEntropyLoss(weights=weights)
     elif task == 2:
@@ -530,11 +536,11 @@ def main():
 
     # Get the training and validation dataset
     training_set = get_dataset(config=config,
-                               split="train",
+                               split="val",
                                transform=get_image_transform(config),
                                augmentation_transform=get_augmentation_transform(config))
     validation_set = get_dataset(config=config,
-                                 split="val",
+                                 split="test",
                                  transform=get_image_transform(config))
 
     # Create dataloader for training and validation
@@ -561,7 +567,7 @@ def main():
     )
 
     # Get the loss function
-    weights = training_set.get_class_weights_effective(int(config.TASK), normalize="mean1").to(DEVICE)
+    weights = training_set.get_class_weights(int(config.TASK)).to(DEVICE)
     loss_fn = get_loss_fn(config, weights=weights)
 
     # Create optimizer
@@ -617,7 +623,7 @@ def main():
     text_features = None
     if config.TUNING.lower() != 'softcpt':
         tokenizer = get_tokenizer(config)
-        if config.MODEL.lower == 'siglip2':
+        if config.MODEL.lower() == 'siglip2':
             text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK], return_tensors="pt", padding='max_length', max_length=32, truncation=True)['input_ids'].to(DEVICE)
         else:
             text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK]).to(DEVICE)
@@ -641,9 +647,11 @@ def main():
 
 
         ################## TRAINING LOOP ##################
-        print(f"[Epoch {epoch+1} - TRAIN]", flush=True)
+        print(f"\n[Epoch {epoch+1} - TRAIN]", flush=True)
         train_loss, train_acc = train_fn(model, train_loader, optimizer, None, loss_fn, DEVICE, None, config, text_features, scaler)
         print(f"  Task '{task_names[0]}': Loss = {train_loss[0]:.4f}, Accuracy = {train_acc[0]:.4f}")
+
+        print(f" New logit scale {model.logit_scale.item()} - exp = {model.logit_scale.exp().item()} - bias {model.logit_bias.item()if hasattr(model, 'logit_bias') else 0.0}")
         tracker.update_loss(0, train_loss[0], train=True)
         tracker.update_accuracy(0, train_acc[0], train=True)
 
@@ -712,7 +720,7 @@ def main():
                 normalize=True
             )
         torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))
-        scheduler.step()
+        #scheduler.step()
         lr_history.append(optimizer.param_groups[0]['lr'])
 
     # Plot learning rate schedule

@@ -1,3 +1,4 @@
+from transformers import AutoConfig, AutoTokenizer
 from core.vision_encoder.config import PE_VISION_CONFIG
 from core.vision_encoder import transforms
 from wrappers.PerceptionEncoder.pe import PECore_Vision
@@ -6,6 +7,7 @@ import torch
 import os
 from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
+from wrappers.SigLip2.SigLip2Model import Siglip2Model
 from wrappers.promptopt.prompt_learner import CustomModel
 from training import training_functions
 from torch.utils.data import DataLoader
@@ -22,6 +24,15 @@ from sklearn.metrics import ConfusionMatrixDisplay
 import seaborn as sns
 from collections import defaultdict
 import sys
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def get_tokenizer(config):
+    if config.MODEL.lower() == 'pecore':        
+        return transforms.get_text_tokenizer(32)
+    elif config.MODEL.lower() == 'siglip2':
+        tokenizer = AutoTokenizer.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
+        return tokenizer
 # ---------------------------------------------------------
 # Funzione di analisi con i 4 grafici richiesti
 # ---------------------------------------------------------
@@ -259,10 +270,16 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
                 text_features = model.get_text_features(normalize=True)
 
             # --- abilita autocast per mixed precision ---
-            from torch.cuda.amp import autocast
-            with autocast():
+            from torch.amp import autocast
+            with autocast("cuda"):
                 image_features = model.get_image_features(image, normalize=True)
-                logits = model.logit_scale.exp() * (image_features @ text_features.T)
+                logit_scale = 1.0
+                if hasattr(model, 'logit_scale'):
+                    logit_scale = model.logit_scale.exp()
+                logit_bias = 0.0
+                if hasattr(model, 'logit_bias'):
+                    logit_bias = model.logit_bias
+                logits = logit_scale * (image_features @ text_features.T) + logit_bias
                 logits_by_task = torch.split(logits, logit_split, dim=1)
 
                 total_loss = 0.0
@@ -343,54 +360,68 @@ vision_ckpt = os.path.join(output_dir, "ckpt", m)
 
 if config.TUNING.lower() == 'softcpt':
     print("Inizializzazione del modello SoftCPT")
-    base_model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
-    model_ = CustomModel(
-        n_ctx=config.NUM_TEXT_CNTX,
-        tasknames=config.TASK_NAMES,
-        classnames=config.CLASSES,
-        model=base_model,
-        tokenizer=transforms.get_text_tokenizer(base_model.text_model.context_length)
-    ).to("cuda")
+    if config.MODEL.lower() == 'pecore':
+        base_model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+        model_ = CustomModel(
+            n_ctx=config.NUM_TEXT_CNTX,
+            tasknames=config.TASK_NAMES,
+            classnames=config.CLASSES,
+            model=base_model,
+            tokenizer=transforms.get_text_tokenizer(base_model.text_model.context_length)
+        ).to(DEVICE)
+    else:
+        pass
 else:
     print("Inizializzazione del modello VPT")
-    model_ = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT).to("cuda")
+    if config.MODEL.lower() == 'pecore':
+        model_ = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT).to(DEVICE)
+    elif config.MODEL.lower() == 'siglip2':
+        model_ = Siglip2Model(
+                config = AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                num_prompts=config.NUM_VISUAL_PROMPT
+            )
+        model_.load_model(path="./hf_models/model.pth", map_location=DEVICE)
+        model_.to(DEVICE)
 
-checkpoint = torch.load(vision_ckpt, map_location="cuda")
+checkpoint = torch.load(vision_ckpt, map_location=DEVICE)
 missing, unexpected = model_.load_state_dict(checkpoint, strict=False)
 print("Chiavi mancanti nel modello:", missing)
 print("Chiavi inattese nel checkpoint:", unexpected)
 
 text_features = None
 if config.TUNING.lower() != 'softcpt':
-    TEXT_CLASSES_PROMPT = config.TEXT_CLASSES_PROMPT
-    tokenizer = transforms.get_text_tokenizer(model_.text_model.context_length)
-    all_text_features = []
-    for task_prompts in TEXT_CLASSES_PROMPT:
-        text = tokenizer(task_prompts).to("cuda")
-        task_text_features = model_.get_text_features(text=text, normalize=True)
-        all_text_features.append(task_text_features)
-    text_features = torch.cat(all_text_features, dim=0)
-    model_.text_model = None
-    print(f"Loaded text features into the model {text_features.shape}")
-else:
-    text_features = model_.get_text_features(normalize=True)
-    print(f"Loaded text features into the model {text_features.shape}")
+    tokenizer = get_tokenizer(config)
+    
+    task_text_features = []
+    for task_prompts in config.TEXT_CLASSES_PROMPT:
+        for classes in task_prompts:
+            if config.MODEL.lower() == 'siglip2':                
+                text = tokenizer(classes, return_tensors="pt", padding='max_length', max_length=64, truncation=True)['input_ids'].to(DEVICE)
+            else:
+                text = tokenizer(classes).to(DEVICE)
+            classes_features = F.normalize(model_.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
+            task_text_features.append(classes_features)
+
+
+    text_features = torch.stack(task_text_features, dim=0)
+    #print(f"Text prompts by task: {config.TEXT_CLASSES_PROMPT}")
+    print(f"Text features shape: {text_features.shape}")
+
 
 # ---------------------------------------------------------
 # Dataset e dataloader
 # ---------------------------------------------------------
 test_dataset = MultiDataset(
     #dataset_names=['UTKFace'],
-    dataset_names=["FairFace"],
+    dataset_names=["FairFace","UTKFace","RAF-DB"],
     transform=transforms.get_image_transform(224),
     split="test",
     datasets_root="/user/amolinario/processed_datasets/datasets_with_standard_labels/",
     all_datasets=False, 
     verbose=True
 )
-test_dataset.get_class_weights(0)
-test_dataset.get_class_weights(1)
-test_dataset.get_class_weights(2)
+weight = [test_dataset.get_class_weights(i) for i in range(3)]
+
 
 dataloader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2, prefetch_factor=2)
 
@@ -398,7 +429,7 @@ dataloader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers
 # Loss e pesi dei task
 # ---------------------------------------------------------
 loss_fn = [
-    MaskedLoss(OrdinalPeakedCELoss(num_classes=9), -1),
+    MaskedLoss(OrdinalAgeLoss(num_classes=9), -1),
     MaskedLoss(CrossEntropyLoss(), -1),
     MaskedLoss(CrossEntropyLoss(), -1)
 ]
@@ -411,7 +442,7 @@ losses, accuracies, maes, f1_scores, all_preds_list, all_labels_list, all_probs_
     model=model_,
     dataloader=dataloader,
     loss_fn=loss_fn,
-    device="cuda",
+    device=DEVICE,
     task_weight=task_weight,
     config=config,
     text_features=text_features

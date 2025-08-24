@@ -63,7 +63,6 @@ class Siglip2Model(SiglipPreTrainedModel):
         self.config = config    
         text_config = config.text_config
         vision_config = config.vision_config
-        print(config)
         # Initialize the text and vision models with the number of prompts
         self.text_model = SiglipTextModel(text_config)
         # If num prompt is 0 than the model is the pure baseline
@@ -146,8 +145,8 @@ class Siglip2Model(SiglipPreTrainedModel):
         pooled_output = text_outputs.pooler_output
 
         if normalize:
-            pooled_output = pooled_output / pooled_output.norm(p=2, dim=-1, keepdim=True)
-
+            #pooled_output = pooled_output / pooled_output.norm(p=2, dim=-1, keepdim=True)
+            pooled_output = nn.functional.normalize(pooled_output, dim=-1) if normalize else pooled_output
         return pooled_output
 
     def get_image_features(self, image, normalize=False):
@@ -160,8 +159,8 @@ class Siglip2Model(SiglipPreTrainedModel):
         )
         pooled_output = vision_outputs.pooler_output
         if normalize:
-            pooled_output = pooled_output / pooled_output.norm(p=2, dim=-1, keepdim=True)
-            
+            #pooled_output = pooled_output / pooled_output.norm(p=2, dim=-1, keepdim=True)
+            pooled_output = nn.functional.normalize(pooled_output, dim=-1) if normalize else pooled_output
         return pooled_output
 
     def forward(self, text, image):

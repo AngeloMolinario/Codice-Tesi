@@ -8,8 +8,8 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as T
 import matplotlib.pyplot as plt
 from torchvision import transforms as T
-from torch.cuda.amp import autocast, GradScaler
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.amp import autocast, GradScaler
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 
 import os
 import numpy as np
@@ -20,7 +20,7 @@ from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
 from wrappers.SigLip2.SigLip2Model import Siglip2Model
-from transformers import AutoConfig
+from transformers import AutoConfig, AutoTokenizer
 from training import training_functions
 from training.loss import *
 from core.vision_encoder import transforms
@@ -70,7 +70,12 @@ def get_model(config):
         raise NotImplementedError(f"Model {model_name} is not implemented for VVPT tuning.")
     else:
         raise ValueError(f"Unknown tuning method: {tuning}")
-
+def get_tokenizer(config):
+    if config.MODEL.lower() == 'pecore':        
+        return transforms.get_text_tokenizer(32)
+    elif config.MODEL.lower() == 'siglip2':
+        tokenizer = AutoTokenizer.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
+        return tokenizer
 def get_dataset(config, split, transform=None, augmentation_transform=None):
 
     balance_task = None
@@ -112,12 +117,8 @@ def get_dataset(config, split, transform=None, augmentation_transform=None):
 
 def get_loss_fn(config, weights=None):    
     # Solo multitask
-    age_loss = CrossEntropyMAELoss(
-        bin_centers=torch.tensor([1.5, 6.5, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 80.0]).to('cuda'),
-        class_weights=weights[0].to('cuda'),
-        alpha=0.3,
-        scale=15.0
-    ).to('cuda')
+    bin_centers = torch.tensor([1.0, 6.0, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 75.0], dtype=torch.float32).cuda()
+    age_loss = OrdinalAgeLoss(num_classes=9, class_frequencies=weights[0], lambda_ordinal=0.4)
     gender_loss = CrossEntropyLoss(weights=weights[1])
     emotion_loss = CrossEntropyLoss(weights=weights[2])
     loss = [
@@ -153,7 +154,7 @@ def get_augmentation_transform(config):
     if model_name == 'pecore':
         tform.append(T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True))
     elif model_name == 'siglip2':
-        raise NotImplementedError(f"Augmentation transform for model {model_name} is not implemented.")
+        tform.append(T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5], inplace=True))
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     
@@ -192,13 +193,19 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
         if compute_text_features:
             text_features = model.get_text_features(normalize=True).T.contiguous()        
 
-        with autocast():
+        scale = 1.0
+        if hasattr(model, 'logit_scale'):
+            scale = model.logit_scale.exp()
+        bias = 0.0
+        if hasattr(model, 'logit_bias'):
+            bias = model.logit_bias
+
+        # Use mixed precision on CUDA when available
+        with autocast(device_type=device):
             with torch.set_grad_enabled(config.NUM_VISUAL_PROMPT!=0):
                 image_features = model.get_image_features(image, normalize=True)
-
-            #logits = model.logit_scale.exp() * (image_features @ text_features)
-            logits = (image_features @ text_features)
-            logits_by_task = torch.split(logits, logit_split, dim=1)  # tuple di view
+            logits = scale * (image_features @ text_features) + bias
+            logits_by_task = torch.split(logits, logit_split, dim=1)
 
             total_loss = 0.0
 
@@ -227,7 +234,7 @@ def multitask_train_fn(model, dataloader, optimizer, running_mean, loss_fn, devi
 
         losses_sums[-1] += total_loss.detach()
         if not config.USE_TQDM and (num_batch + 1)%100 == 0:
-                print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r', flush=True)
+            print(f"Processed {num_batch + 1}/{len(iterator)}", end='\r', flush=True)
 
     # Compute the average losses and accuracy
     accuracies = [(correct[i] / count[i]).item() if count[i] > 0 else float('nan')
@@ -450,11 +457,17 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
             if compute_text_features:
                 text_features = model.get_text_features(normalize=True)
 
-            # --- abilita autocast per mixed precision ---
-            with autocast():
+            scale = 1.0
+            if hasattr(model, 'logit_scale'):
+                scale = model.logit_scale.exp()
+            bias = 0.0
+            if hasattr(model, 'logit_bias'):
+                bias = model.logit_bias
+
+            # Use mixed precision during validation forward pass on CUDA
+            with autocast(device_type=device):
                 image_features = model.get_image_features(image, normalize=True)
-                #logits = model.logit_scale.exp() * (image_features @ text_features.T)
-                logits = (image_features @ text_features.T)
+                logits = scale * (image_features @ text_features.T) + bias
                 logits_by_task = torch.split(logits, logit_split, dim=1)
 
                 total_loss = 0.0
@@ -583,7 +596,7 @@ def main():
 
     ################ Get the loss function #####################################################
 
-    weights = [training_set.get_class_weights_effective(i).to(DEVICE) for i in range(3)]
+    weights = [training_set.get_class_weights(i, normalize=True).to(DEVICE) for i in range(3)]
     loss_fn = get_loss_fn(config, weights=weights)
 
     ####################### CREATE OPTIMIZER ###################################################
@@ -602,11 +615,10 @@ def main():
     optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=0.0)
 
     # Add GradScaler for mixed precision
-    scaler = GradScaler()
-
+    scaler = GradScaler(device=DEVICE)
     # Add CosineAnnealingLR scheduler
-    scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
-
+    #scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, min_lr=1e-6)
     # Lista per tracciare il learning rate
     lr_history = [optimizer.param_groups[0]['lr']]
 
@@ -669,27 +681,33 @@ def main():
 
     text_features = None
     if config.TUNING.lower() != 'softcpt':
-        tokenizer = transforms.get_text_tokenizer(model.text_model.context_length)
-        all_text_features = []
+        tokenizer = get_tokenizer(config)
+        
+        task_text_features = []
         for task_prompts in config.TEXT_CLASSES_PROMPT:
-            text = tokenizer(task_prompts).to(DEVICE)
-            task_text_features = model.get_text_features(text=text, normalize=True)
-            all_text_features.append(task_text_features)
+            for classes in task_prompts:
+                if config.MODEL.lower() == 'siglip2':                
+                    text = tokenizer(classes, return_tensors="pt", padding='max_length', max_length=64, truncation=True)['input_ids'].to(DEVICE)
+                else:
+                    text = tokenizer(classes).to(DEVICE)
+                classes_features = F.normalize(model.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
+                task_text_features.append(classes_features)
+
+
         model.save(
             save_path=os.path.join(config.OUTPUT_DIR, f"ckpt/initial_model.pt"),
-            text_features=torch.cat(all_text_features, dim=0),
+            text_features=torch.stack(task_text_features, dim=0),
             text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_text_features.pt"),
         )
-        text_features = torch.cat(all_text_features, dim=0)
-        print(f"Text prompts by task: {config.TEXT_CLASSES_PROMPT}")
+        text_features = torch.stack(task_text_features, dim=0)
+        #print(f"Text prompts by task: {config.TEXT_CLASSES_PROMPT}")
         print(f"Text features shape: {text_features.shape}")
-        print(f"Text features shapes per task: {[tf.shape for tf in all_text_features]}")
 
-    task_weight = training_set.get_task_weights()
-    print(f"Task weights: {task_weight}")
+    data_task_weight = training_set.get_task_weights()
+    print(f"Task weights: {data_task_weight}")
 
     print(f"\n[Epoch 0 - VAL]", flush=True)
-    val_loss, val_acc, all_preds_list, all_labels_list, _ = val_fn(model, val_loader, loss_fn, DEVICE, task_weight, config, text_features)
+    val_loss, val_acc, all_preds_list, all_labels_list, _ = val_fn(model, val_loader, loss_fn, DEVICE, torch.ones(3).to(DEVICE), config, text_features)
     for t in range(num_tasks):
         print(f"  Task '{task_names[t]}': Loss = {val_loss[t]:.4f}, Accuracy = {val_acc[t]:.4f}")
         tracker.update_confusion(t, all_preds_list[t], all_labels_list[t], 100)
@@ -706,7 +724,6 @@ def main():
 
     weights_history = []
 
-    print(f"LOGIT SCALE: {model.logit_scale.item()}")
 
     for epoch in range(config.EPOCHS):
         
@@ -716,7 +733,7 @@ def main():
             w_i = running_mean.get_by_index(i)
             if w_i is None:
                 w_i=1.0
-            w.append(1.0 / max(w_i, 1e-8))
+            w.append((1.0 / max(w_i, 1e-8)) * data_task_weight[i])
         task_weight = torch.tensor(w, device=DEVICE)
         task_weight = task_weight / task_weight.sum()
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")
@@ -729,6 +746,12 @@ def main():
             tracker.update_loss(t, train_loss[t], train=True)
             tracker.update_accuracy(t, train_acc[t], train=True)
         print(f"  Total Loss: {sum(train_loss[:-1]):.4f}, Total weighted loss {train_loss[-1]:.4f}, Mean Accuracy : {sum(train_acc)/num_tasks:.4f}")        
+
+        if hasattr(model, 'logit_scale'):
+            print(f"Logit scale: {model.logit_scale.item()} - exp({model.logit_scale.exp().item()})")
+        if hasattr(model, 'logit_bias'):
+            print(f"Logit bias: {model.logit_bias.item()}")
+            
         tracker.update_loss(None, sum(train_loss[:-1]), train=True, multitask=True)
         tracker.update_accuracy(None, sum(train_acc)/num_tasks, train=True, mean=True)        
 
@@ -785,7 +808,7 @@ def main():
             print("Early stopping triggered.")
             break
         torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))
-        scheduler.step()
+        scheduler.step(val_loss[-1])
         lr_history.append(optimizer.param_groups[0]['lr'])
 
         # Plot della variazione del learning rate

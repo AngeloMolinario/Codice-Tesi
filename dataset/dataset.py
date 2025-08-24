@@ -186,13 +186,20 @@ class WeightCalculationMixin:
     - _get_task_counts_and_total_len(self)
     - self.verbose attribute
     """
-
-    def get_class_weights(self, task_idx: int):
-        """Compute inverse-frequency class weights for the specified task index (0=age, 1=gender, 2=emotion)."""
+    def get_class_weights(self, task_idx: int, normalize: bool = True):
+        """Compute inverse-frequency class weights for the specified task index (0=age, 1=gender, 2=emotion).
+        
+        Args:
+            task_idx: index of the task (0=age, 1=gender, 2=emotion)
+            normalize: if True, normalize weights so that max weight = 1.0 (recommended for ordinal tasks)
+        
+        Returns:
+            Tensor of class weights, normalized if requested
+        """
         if not hasattr(self, 'class_weights'):
             self.class_weights = {}
-        if self.class_weights.get(task_idx) is not None:
-            return self.class_weights[task_idx]
+        if self.class_weights.get((task_idx, normalize)) is not None:
+            return self.class_weights[(task_idx, normalize)]
 
         if self.verbose:
             print(f"Computing class weights for task idx: {task_idx} (using {self.__class__.__name__})")
@@ -218,12 +225,25 @@ class WeightCalculationMixin:
             weight = total_valid_samples / (len(class_counts) * count)
             weights_array.append(weight)
 
+        # APPLICAZIONE DELLA NORMALIZZAZIONE RICHIESTA
+        if normalize:
+            max_weight = max(weights_array)
+            if max_weight > 0:  # Protezione da divisione per zero
+                weights_array = [w / max_weight for w in weights_array]
+                if self.verbose:
+                    print(f"Normalized class weights (max=1.0) for task {task_idx}: {weights_array}")
+            else:
+                if self.verbose:
+                    print(f"Warning: max_weight is zero, skipping normalization for task {task_idx}")
+
         weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
-        self.class_weights[task_idx] = weights_tensor
+        self.class_weights[(task_idx, normalize)] = weights_tensor
 
         if self.verbose:
             print(f"Class distribution (task {task_idx}): {dict(sorted(class_counts.items()))}")
-            print(f"Class weights (task {task_idx}): {weights_tensor}")
+            print(f"Raw class weights (task {task_idx}): {[round(w, 3) for w in weights_array]}")
+            if normalize:
+                print(f"NOTE: Weights normalized with max=1.0 (recommended for ordinal classification)")
 
         return weights_tensor
 
