@@ -20,6 +20,9 @@ class PETokenizer():
     def __call__(self, text):
         return self.tokenize(text)
     
+    def has_sos_token(self):
+        return True
+    
 class SigLip2Tokenizer():
     instance = None
 
@@ -38,3 +41,6 @@ class SigLip2Tokenizer():
 
     def __call__(self, text):
         return self.tokenize(text)
+
+    def has_sos_token(self):
+        return False

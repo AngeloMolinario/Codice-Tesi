@@ -19,7 +19,6 @@ import seaborn as sns
 from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
-from training import training_functions
 from training.loss import *
 from core.vision_encoder import transforms
 from training.training_functions import *
@@ -28,6 +27,9 @@ from utils.configuration import Config
 
 from wrappers.SigLip2.SigLip2Model import Siglip2Model
 from transformers import AutoConfig, AutoTokenizer
+from wrappers.tokenizer import *
+from tqdm import tqdm
+
 
 def get_model(config):
     ''' This method look at the configuration file and return the correct model initialized with pretrained weights and the specified attributes'''
@@ -71,12 +73,11 @@ def get_model(config):
         raise ValueError(f"Unknown tuning method: {tuning}")
     
 def get_tokenizer(config):
-    if config.MODEL.lower() == 'pecore':        
-        return transforms.get_text_tokenizer(32)
+    if config.MODEL.lower() == 'pecore':
+        return PETokenizer.get_instance(32)
     elif config.MODEL.lower() == 'siglip2':
-        tokenizer = AutoTokenizer.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
-        return tokenizer
-    
+        return SigLip2Tokenizer.get_instance(64)
+
 def get_dataset(config, split, transform=None, augmentation_transform=None):
 
     balance_task = None
@@ -121,25 +122,11 @@ def get_loss_fn(config, weights=None):
     if weights is None:
         weights = torch.ones(len(config.CLASSES[task]))
     if task == 0:
-        bin_centers = torch.tensor([1.0, 6.0, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 75.0], dtype=torch.float32).cuda()
-        return CrossEntropyOrdinalLoss2(
-                bin_centers=bin_centers,
-                scale=1.0,            # aumenta il gap dei logit
-                beta_ord=0.1,         # penalità ordinale "soft"
-                p=1,
-                normalize_dist=True,
-                class_weights=weights,   # opzionale
-                gamma=2.0,            # focal: picco netto sulla classe vera
-                lambda_rank=1.0,      # ranking ordinale (gap minimo)
-                margin=0.5,
-                rank_power=1,
-                only_adjacent=True,   # ranking solo con vicini: stabile ed efficace
-                reduction="mean",
-            )
+        return OrdinalAgeLossFocus(num_classes=9, class_frequencies=weights[0], lambda_ordinal=0.45, focal_alpha=1.5, focal_gamma=2.0)
     elif task == 1:
-        return CrossEntropyLoss(weights=weights)
+        return CrossEntropyLoss(2, weights=weights[1])
     elif task == 2:
-        return CrossEntropyLoss(weights=weights)
+        return FocalLoss(7, weights=weights[2], gamma=2.0)
     else:
         raise ValueError(f"Unknown task: {task}")
 
@@ -457,7 +444,6 @@ def single_task_val_fn(model, dataloader, loss_fn, device, task_weight, config, 
             with autocast(device_type=device):
 
                 image_features = model.get_image_features(image, normalize=True)
-                #logits = (image_features @ text_features.T)
                 logits =  scale *(image_features @ text_features.T) + bias
 
                 # Calcola probabilità, loss e predizioni
@@ -567,7 +553,7 @@ def main():
     )
 
     # Get the loss function
-    weights = training_set.get_class_weights(int(config.TASK)).to(DEVICE)
+    weights = training_set.get_class_weights(int(config.TASK), normalize=True).to(DEVICE)
     loss_fn = get_loss_fn(config, weights=weights)
 
     # Create optimizer
@@ -623,24 +609,29 @@ def main():
     text_features = None
     if config.TUNING.lower() != 'softcpt':
         tokenizer = get_tokenizer(config)
-        if config.MODEL.lower() == 'siglip2':
-            text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK], return_tensors="pt", padding='max_length', max_length=32, truncation=True)['input_ids'].to(DEVICE)
-        else:
-            text = tokenizer(config.TEXT_CLASSES_PROMPT[config.TASK]).to(DEVICE)
-        text_features = model.get_text_features(text=text, normalize=True)
+        
+        task_text_features = []
+        for task_prompts in config.TEXT_CLASSES_PROMPT:
+            for classes in task_prompts:
+                text = tokenizer(classes).to(DEVICE)
+                classes_features = F.normalize(model.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
+                task_text_features.append(classes_features)
+
+
         model.save(
             save_path=os.path.join(config.OUTPUT_DIR, f"ckpt/initial_model.pt"),
-            text_features=text_features,
+            text_features=torch.stack(task_text_features, dim=0),
             text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_text_features.pt"),
         )
-        print(f"Text prompts: {config.TEXT_CLASSES_PROMPT[config.TASK]}")
+        text_features = torch.stack(task_text_features, dim=0)
+        #print(f"Text prompts by task: {config.TEXT_CLASSES_PROMPT}")
         print(f"Text features shape: {text_features.shape}")
+
     print(f"\n[Epoch 0 - VAL]", flush=True)
     val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, None, config, text_features)
     print(f"  Task '{task_names[0]}': Loss = {val_loss[0]:.4f}, Accuracy = {val_acc[0]:.4f}")
     tracker.update_confusion(0, all_preds_list[0], all_labels_list[0], 100)
     tracker.save_confusion_matrices(100)
-    tracker.save()
 
 
     for epoch in range(config.EPOCHS):
@@ -720,7 +711,7 @@ def main():
                 normalize=True
             )
         torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))
-        #scheduler.step()
+        scheduler.step()
         lr_history.append(optimizer.param_groups[0]['lr'])
 
     # Plot learning rate schedule

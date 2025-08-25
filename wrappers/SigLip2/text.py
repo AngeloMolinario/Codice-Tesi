@@ -31,19 +31,18 @@ class CustomSiglipTextTransformer(nn.Module):
         return self.embeddings.token_embedding
 
     def prompt_forward(self, prompt, task_tokenized_prompts):        
-        attention_mask = task_tokenized_prompts[0,:]
-        attention_mask[task_tokenized_prompts[0,:]!=0] = 1
-        seq_length = attention_mask.sum()
-
+        '''
+            This method use the prompts embeddings directly instead of computing them using the embedding layer
+        '''
 
         position_id = self.embeddings.position_ids
         pos = self.embeddings.position_embedding(position_id)
 
-        hidden_states = prompt + pos
-  
+        hidden_states = prompt + pos    
+
         encoder_outputs: BaseModelOutput = self.encoder(
             inputs_embeds=hidden_states,
-            attention_mask=attention_mask.to(torch.float32).to('cuda'),
+            attention_mask=None,
             output_attentions=self.config.output_attentions,
             output_hidden_states=self.config.output_hidden_states,
         )
@@ -66,6 +65,12 @@ class CustomSiglipTextTransformer(nn.Module):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
     ) -> BaseModelOutputWithPooling:
+        
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -84,6 +89,7 @@ class CustomSiglipTextTransformer(nn.Module):
         if attention_mask is not None and not self._use_flash_attention_2:
             # [batch_size, seq_len] -> [batch_size, 1, tgt_seq_len, src_seq_len]
             attention_mask = _prepare_4d_attention_mask(attention_mask, hidden_states.dtype)
+            
 
         encoder_outputs: BaseModelOutput = self.encoder(
             inputs_embeds=hidden_states,
@@ -95,7 +101,7 @@ class CustomSiglipTextTransformer(nn.Module):
         last_hidden_state = encoder_outputs.last_hidden_state
         last_hidden_state = self.final_layer_norm(last_hidden_state)
 
-        # The model uses the last token's hidden state, which may be padding.
+        # The model uses the last token's hidden state, which may be padding.        
         pooled_output = last_hidden_state[:, -1, :]
         pooled_output = self.head(pooled_output)
 

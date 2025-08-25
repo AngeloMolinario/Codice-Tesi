@@ -9,30 +9,32 @@ from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.SigLip2.SigLip2Model import Siglip2Model
 from wrappers.promptopt.prompt_learner import CustomModel
-from training import training_functions
 from torch.utils.data import DataLoader
 from training.loss import *
 from core.vision_encoder import transforms
-from training.training_functions import *
 from utils.metric import MultitaskTracker
 from utils.configuration import Config
 import numpy as np
-from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn.metrics import ConfusionMatrixDisplay
 import seaborn as sns
 from collections import defaultdict
 import sys
+from transformers import AutoConfig
+from wrappers.tokenizer import *
+import pandas as pd
+from torchvision.transforms import transforms as T
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_tokenizer(config):
-    if config.MODEL.lower() == 'pecore':        
-        return transforms.get_text_tokenizer(32)
+    if config.MODEL.lower() == 'pecore':
+        return PETokenizer.get_instance(32)
     elif config.MODEL.lower() == 'siglip2':
-        tokenizer = AutoTokenizer.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
-        return tokenizer
+        return SigLip2Tokenizer.get_instance(64)
+
 # ---------------------------------------------------------
 # Funzione di analisi con i 4 grafici richiesti
 # ---------------------------------------------------------
@@ -338,9 +340,56 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
         all_labels_list.append(all_labels.cpu())
         all_probs_list.append(all_probs.cpu())
 
+    # Calcolo della @2 accuracy per ogni task e strutturazione in tabella
+    accuracies_at_2 = []
+    for i in range(num_task):
+        if preds_per_task[i]:
+            all_preds = torch.cat(preds_per_task[i], dim=0)
+            all_labels = torch.cat(labels_per_task[i], dim=0)
+            all_probs = torch.cat(probs_per_task[i], dim=0)
+
+            # Calcolo della @2 accuracy
+            top2_preds = torch.topk(all_probs, k=2, dim=1).indices
+            acc_at_2 = (all_labels.unsqueeze(1) == top2_preds).any(dim=1).float().mean().item()
+        else:
+            acc_at_2 = float('nan')
+
+        accuracies_at_2.append(acc_at_2)
+
+    # Creazione della tabella con pandas
+    data = {
+        'Task': config.TASK_NAMES,
+        'Accuracy': accuracies,
+        '@2 Accuracy': accuracies_at_2,
+        'MAE': maes,
+        'F1-Score': f1_scores
+    }
+    results_df = pd.DataFrame(data)
+    results_df = results_df.sort_values(by='Task')
+
+    # Stampa della tabella
+    print("\nRisultati strutturati in tabella:")
+    print(results_df)
+
+    # Salvataggio della tabella in un file CSV
+    results_df.to_csv(os.path.join(output_dir, "results_summary.csv"), index=False)
+
     mean_loss = [(losses_sums[i]/num_batch).item() for i in range(num_task+1)]
 
     return mean_loss, accuracies, maes, f1_scores, all_preds_list, all_labels_list, all_probs_list
+
+def get_image_transform(config):
+    model_name = config.MODEL.lower()
+    if model_name == 'pecore':
+        return transforms.get_image_transform(224)
+    elif model_name == 'siglip2':
+        return T.Compose([
+            T.Resize((224, 224)),
+            T.ToTensor(),
+            T.Normalize([0.5,0.5,0.5], [0.5,0.5,0.5])
+        ])
+
+    raise ValueError(f"Unknown model name: {model_name}")
 
 # ---------------------------------------------------------
 # Configurazione e caricamento modello
@@ -367,10 +416,22 @@ if config.TUNING.lower() == 'softcpt':
             tasknames=config.TASK_NAMES,
             classnames=config.CLASSES,
             model=base_model,
-            tokenizer=transforms.get_text_tokenizer(base_model.text_model.context_length)
+            tokenizer=get_tokenizer(config)
         ).to(DEVICE)
     else:
-        pass
+        print("SIGLIP2")
+        base_model = Siglip2Model(
+                config = AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                num_prompts=config.NUM_VISUAL_PROMPT
+            )
+        base_model.load_model(path="./hf_models/model.pth", map_location=DEVICE)
+        model_ = CustomModel(
+            n_ctx=config.NUM_TEXT_CNTX,
+            tasknames=config.TASK_NAMES,
+            classnames=config.CLASSES,
+            model=base_model,
+            tokenizer=get_tokenizer(config)
+        ).to(DEVICE)
 else:
     print("Inizializzazione del modello VPT")
     if config.MODEL.lower() == 'pecore':
@@ -391,14 +452,11 @@ print("Chiavi inattese nel checkpoint:", unexpected)
 text_features = None
 if config.TUNING.lower() != 'softcpt':
     tokenizer = get_tokenizer(config)
-    
+        
     task_text_features = []
     for task_prompts in config.TEXT_CLASSES_PROMPT:
         for classes in task_prompts:
-            if config.MODEL.lower() == 'siglip2':                
-                text = tokenizer(classes, return_tensors="pt", padding='max_length', max_length=64, truncation=True)['input_ids'].to(DEVICE)
-            else:
-                text = tokenizer(classes).to(DEVICE)
+            text = tokenizer(classes).to(DEVICE)
             classes_features = F.normalize(model_.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
             task_text_features.append(classes_features)
 
@@ -412,9 +470,8 @@ if config.TUNING.lower() != 'softcpt':
 # Dataset e dataloader
 # ---------------------------------------------------------
 test_dataset = MultiDataset(
-    #dataset_names=['UTKFace'],
-    dataset_names=["FairFace","UTKFace","RAF-DB"],
-    transform=transforms.get_image_transform(224),
+    dataset_names=[sys.argv[4]],
+    transform=get_image_transform(config),
     split="test",
     datasets_root="/user/amolinario/processed_datasets/datasets_with_standard_labels/",
     all_datasets=False, 
@@ -430,8 +487,8 @@ dataloader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers
 # ---------------------------------------------------------
 loss_fn = [
     MaskedLoss(OrdinalAgeLoss(num_classes=9), -1),
-    MaskedLoss(CrossEntropyLoss(), -1),
-    MaskedLoss(CrossEntropyLoss(), -1)
+    MaskedLoss(CrossEntropyLoss(2), -1),
+    MaskedLoss(FocalLoss(7, None, 1), -1)
 ]
 task_weight = torch.ones(3, device="cuda")
 
@@ -461,29 +518,6 @@ analyze_age_errors(
 # ---------------------------------------------------------
 # Salvataggio metriche
 # ---------------------------------------------------------
-print(f"Losses:")
-print(f"\tAge: {losses[0]:.6f}")
-print(f"\tGender: {losses[1]:.6f}")
-print(f"\tEmotion: {losses[2]:.6f}")
-print(f"\tMultitask: {losses[-1]:.6f}")
-
-print(f"Accuracy:")
-print(f"\tAge: {accuracies[0]:.6f}")
-print(f"\tGender: {accuracies[1]:.6f}")
-print(f"\tEmotion: {accuracies[2]:.6f}")
-print(f"\tMean: {sum(accuracies)/3:.6f}")
-
-print(f"MAE:")
-print(f"\tAge: {maes[0]:.6f}")
-print(f"\tGender: {maes[1]:.6f}")
-print(f"\tEmotion: {maes[2]:.6f}")
-print(f"\tMean: {sum(maes)/3:.6f}")
-
-print(f"Macro F1-Score:")
-print(f"\tAge: {f1_scores[0]:.6f}")
-print(f"\tGender: {f1_scores[1]:.6f}")
-print(f"\tEmotion: {f1_scores[2]:.6f}")
-print(f"\tMean: {sum(f1_scores)/3:.6f}")
 
 with open(os.path.join(final_dir, "results.txt"), "w") as f:
     f.write(f"Losses:\n")
@@ -523,3 +557,59 @@ for i, (preds, labels) in enumerate(zip(all_preds_list, all_labels_list)):
     plt.savefig(f"{final_dir}/confusion_matrix_{task_names[i].lower()}.png")
     plt.close(fig)
     print(f"Salvata matrice di confusione per il task {task_names[i]}")
+
+# Creazione della tabella con pandas per le metriche finali
+final_data = {
+    'Metric': ['Loss', 'Accuracy', 'MAE', 'Macro F1-Score'],
+    'Age': [losses[0], accuracies[0], maes[0], f1_scores[0]],
+    'Gender': [losses[1], accuracies[1], maes[1], f1_scores[1]],
+    'Emotion': [losses[2], accuracies[2], maes[2], f1_scores[2]],
+    'Mean': [losses[-1], sum(accuracies)/3, sum(maes)/3, sum(f1_scores)/3]
+}
+final_results_df = pd.DataFrame(final_data)
+
+# Salvataggio della tabella in un file CSV
+final_results_df.to_csv(os.path.join(final_dir, "final_results_summary.csv"), index=False)
+
+# Creazione di una tabella per ogni task con accuracy, precision e recall per classe
+for task_idx, task_name in enumerate(config.TASK_NAMES):
+    if all_preds_list[task_idx].numel() > 0 and all_labels_list[task_idx].numel() > 0:
+        preds = all_preds_list[task_idx].numpy()
+        labels = all_labels_list[task_idx].numpy()
+
+        # Calcolo delle metriche per classe
+        class_accuracies = []
+        class_precisions = []
+        class_recalls = []
+        for class_idx in range(len(config.CLASSES[task_idx])):
+            class_mask = labels == class_idx
+            if class_mask.sum() > 0:
+                class_accuracy = (preds[class_mask] == labels[class_mask]).mean()
+                class_precision = precision_score(labels, preds, labels=[class_idx], average='macro', zero_division=0)
+                class_recall = recall_score(labels, preds, labels=[class_idx], average='macro', zero_division=0)
+            else:
+                class_accuracy = float('nan')
+                class_precision = float('nan')
+                class_recall = float('nan')
+
+            class_accuracies.append(class_accuracy)
+            class_precisions.append(class_precision)
+            class_recalls.append(class_recall)
+
+        # Creazione della tabella
+        task_data = {
+            'Class': config.CLASSES[task_idx],
+            'Accuracy': class_accuracies,
+            'Precision': class_precisions,
+            'Recall': class_recalls
+        }
+        task_df = pd.DataFrame(task_data)
+
+        # Stampa della tabella
+        print(f"\nMetriche per il task: {task_name}")
+        print(task_df)
+
+        # Salvataggio della tabella in un file CSV
+        task_df.to_csv(os.path.join(output_dir, f"metrics_task_{task_name.lower()}.csv"), index=False)
+    else:
+        print(f"Nessun dato valido per il task {task_name}")

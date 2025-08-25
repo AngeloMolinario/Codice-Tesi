@@ -9,7 +9,7 @@ import torchvision.transforms as T
 import matplotlib.pyplot as plt
 from torchvision import transforms as T
 from torch.amp import autocast, GradScaler
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import os
 import numpy as np
@@ -22,12 +22,12 @@ from wrappers.promptopt.prompt_learner import CustomModel
 from wrappers.SigLip2.SigLip2Model import Siglip2Model
 from wrappers.tokenizer import PETokenizer, SigLip2Tokenizer
 from transformers import AutoConfig, AutoTokenizer
-from training import training_functions
 from training.loss import *
 from core.vision_encoder import transforms
-from training.training_functions import *
 from utils.metric import MultitaskTracker
 from utils.configuration import Config
+from utils.running_mean import RunningMeans
+from tqdm import tqdm
 
 def get_model(config):
     ''' This method look at the configuration file and return the correct model initialized with pretrained weights and the specified attributes'''
@@ -42,7 +42,7 @@ def get_model(config):
                 tasknames=config.TASK_NAMES,
                 classnames=config.CLASSES,
                 model=base_model,
-                tokenizer=transforms.get_text_tokenizer(base_model.text_model.context_length)
+                tokenizer=get_tokenizer(config)
             )
             return model
         
@@ -90,7 +90,6 @@ def get_tokenizer(config):
     elif config.MODEL.lower() == 'siglip2':
         return SigLip2Tokenizer.get_instance(64)
 
-
 def get_dataset(config, split, transform=None, augmentation_transform=None):
 
     balance_task = None
@@ -132,10 +131,13 @@ def get_dataset(config, split, transform=None, augmentation_transform=None):
 
 def get_loss_fn(config, weights=None):    
     # Solo multitask
-    bin_centers = torch.tensor([1.0, 6.0, 14.5, 24.5, 34.5, 44.5, 54.5, 64.5, 75.0], dtype=torch.float32).cuda()
-    age_loss = OrdinalAgeLoss(num_classes=9, class_frequencies=weights[0], lambda_ordinal=0.4)
-    gender_loss = CrossEntropyLoss(weights=weights[1])
-    emotion_loss = CrossEntropyLoss(weights=weights[2])
+    #age_loss = OrdinalAgeLoss(num_classes=9, class_frequencies=weights[0], lambda_ordinal=0.9)
+    age_loss = OrdinalAgeLossFocus(num_classes=9, class_frequencies=weights[0], lambda_ordinal=1.0, focal_gamma=0.0).to(weights[0].device)
+    #age_loss = OrdinalAgeLossEMD(num_classes=9, class_frequencies=weights[0], lambda_ordinal=0.45)
+
+    gender_loss = CrossEntropyLoss(2, weights=weights[1])
+    #emotion_loss = CrossEntropyLoss(7, weights=weights[2])
+    emotion_loss = FocalLoss(7, weights=weights[2], gamma=0.0)
     loss = [
         MaskedLoss(age_loss, -1),
         MaskedLoss(gender_loss, -1),
@@ -611,7 +613,11 @@ def main():
 
     ################ Get the loss function #####################################################
 
-    weights = [training_set.get_class_weights(i, normalize=i==0).to(DEVICE) for i in range(3)]
+    weights = [
+        training_set.get_class_weights(0, "inverse_sqrt").to(DEVICE),
+        training_set.get_class_weights(1, "default").to(DEVICE),
+        training_set.get_class_weights(2, "inverse_sqrt").to(DEVICE),
+               ]
     loss_fn = get_loss_fn(config, weights=weights)
 
     ####################### CREATE OPTIMIZER ###################################################
@@ -632,8 +638,7 @@ def main():
     # Add GradScaler for mixed precision
     scaler = GradScaler(device=DEVICE)
     # Add CosineAnnealingLR scheduler
-    #scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, min_lr=1e-6)
+    scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
     # Lista per tracciare il learning rate
     lr_history = [optimizer.param_groups[0]['lr']]
 
@@ -740,14 +745,20 @@ def main():
     for epoch in range(config.EPOCHS):
         
         print(f"[Epoch {epoch+1}]", flush=True)
+        
+        # TASK WEIGHTS COMPUTATION
         w = []
         for i in range(num_tasks):
             w_i = running_mean.get_by_index(i)
             if w_i is None:
                 w_i=1.0
             w.append((1.0 / max(w_i, 1e-8))* data_task_weight[i])
-        task_weight = torch.tensor(w, device=DEVICE)
-        task_weight = task_weight / task_weight.sum()
+        max_raw = max(w)
+        task_weight = torch.tensor([r / max(max_raw, 1e-8) for r in w], device=DEVICE)
+        #task_weight = task_weight / task_weight.sum()
+
+
+
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")
         weights_history.append(task_weight.cpu().numpy())
 
@@ -820,7 +831,7 @@ def main():
             print("Early stopping triggered.")
             break
         torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))
-        scheduler.step(val_loss[-1])
+        scheduler.step()
         lr_history.append(optimizer.param_groups[0]['lr'])
 
         # Plot della variazione del learning rate

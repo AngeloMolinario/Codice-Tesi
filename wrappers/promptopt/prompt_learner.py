@@ -67,9 +67,11 @@ class PromptLearner(nn.Module):
         with torch.no_grad():
             embedding = textModel.get_token_embedding_layer()(tokenized_prompts).type(dtype) # Compute the embeddings for the tokenized prompts using the text model
 
-        
-        self.register_buffer("token_prefix", embedding[:, :1, :])          # SOS
-        self.register_buffer("token_suffix", embedding[:, 1 + n_ctx:, :])  # CLS, EOS
+        if tokenizer.has_sos_token():
+            self.register_buffer("token_prefix", embedding[:, :1, :])          # SOS
+            self.register_buffer("token_suffix", embedding[:, 1 + n_ctx:, :])  # CLS, EOS
+        else:
+            self.register_buffer("token_suffix", embedding[:, n_ctx:, :])
 
         self.n_cls = n_cls
         self.n_ctx = n_ctx
@@ -83,17 +85,25 @@ class PromptLearner(nn.Module):
 
         if ctx.dim() == 2:
             ctx = ctx.unsqueeze(0).expand(self.n_cls, -1, -1)
+        if hasattr(self, "token_prefix"):
+            prefix = self.token_prefix
+            suffix = self.token_suffix
 
-        prefix = self.token_prefix
+            if idx is not None:
+                prefix = prefix[idx]
+                suffix = suffix[idx]
+
+            prompts = torch.cat([prefix, ctx, suffix], dim=1)
+            return prompts
+        
         suffix = self.token_suffix
 
-        if idx is not None:
-            prefix = prefix[idx]
+        if idx is not None:        
             suffix = suffix[idx]
 
-        prompts = torch.cat([prefix, ctx, suffix], dim=1)
+        return torch.cat([ctx, suffix], dim=1)
 
-        return prompts
+        
     
 class TaskPromptLearner(nn.Module):
     '''
@@ -129,8 +139,12 @@ class TaskPromptLearner(nn.Module):
 
 
         # NOTE: it allows to access token_prefix and token_suffix by self.token_prefix and self.token_suffix in a static way
-        self.register_buffer("token_prefix", embedding[:, :1, :])  # SOS
-        self.register_buffer("token_suffix", embedding[:, 1 + n_ctx:, :])  # CLS, EOS
+        if tokenizer.has_sos_token():
+            self.register_buffer("token_prefix", embedding[:, :1, :])          # SOS
+            self.register_buffer("token_suffix", embedding[:, 1 + n_ctx:, :])  # CLS, EOS
+        else:
+            self.register_buffer("token_suffix", embedding[:, n_ctx:, :])
+
 
         self.n_task = n_task
         self.n_ctx = n_ctx
@@ -145,13 +159,15 @@ class TaskPromptLearner(nn.Module):
         ctx = self.ctx
         if ctx.dim() == 2:
             ctx = ctx.unsqueeze(0).expand(self.n_task, -1, -1)
-
-        prefix = self.token_prefix
-        suffix = self.token_suffix # NOTE: The suffix contain the embeddings for the task and the EOS tokens
+        if hasattr(self, "token_prefix"):
+            prefix = self.token_prefix
+            suffix = self.token_suffix # NOTE: The suffix contain the embeddings for the task and the EOS tokens
         
-        prompts = torch.cat([prefix, ctx, suffix], dim=1)  # Concatenate the prefix, context and suffix to form the final prompts
+            prompts = torch.cat([prefix, ctx, suffix], dim=1)  # Concatenate the prefix, context and suffix to form the final prompts
 
-        return prompts
+            return prompts        
+        
+        return torch.cat([ctx, self.token_suffix], dim=1)  # Concatenate the context and suffix to form the final prompts
 
 
 class PromptGen(nn.Module):
