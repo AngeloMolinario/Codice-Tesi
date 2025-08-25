@@ -19,12 +19,44 @@ class CustomSiglipTextTransformer(nn.Module):
         super().__init__()
         self.config = config
         embed_dim = config.hidden_size
+        self.width = embed_dim
         self.embeddings = SiglipTextEmbeddings(config)
         self.encoder = SiglipEncoder(config)
         self.final_layer_norm = nn.LayerNorm(embed_dim, eps=config.layer_norm_eps)
 
         self.head = nn.Linear(embed_dim, config.projection_size)
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"        
+
+    def get_token_embedding_layer(self):
+        return self.embeddings.token_embedding
+
+    def prompt_forward(self, prompt, task_tokenized_prompts):        
+        attention_mask = task_tokenized_prompts[0,:]
+        attention_mask[task_tokenized_prompts[0,:]!=0] = 1
+        seq_length = attention_mask.sum()
+
+
+        position_id = self.embeddings.position_ids
+        pos = self.embeddings.position_embedding(position_id)
+
+        hidden_states = prompt + pos
+  
+        encoder_outputs: BaseModelOutput = self.encoder(
+            inputs_embeds=hidden_states,
+            attention_mask=attention_mask.to(torch.float32).to('cuda'),
+            output_attentions=self.config.output_attentions,
+            output_hidden_states=self.config.output_hidden_states,
+        )
+
+        last_hidden_state = encoder_outputs.last_hidden_state
+        last_hidden_state = self.final_layer_norm(last_hidden_state)
+
+        # The model uses the last token's hidden state, which may be padding.
+        pooled_output = last_hidden_state[:, -1, :]
+        pooled_output = self.head(pooled_output)
+
+        return pooled_output
+
 
     def forward(
         self,
@@ -80,6 +112,7 @@ class SiglipTextModel(SiglipPreTrainedModel):
 
     def __init__(self, config: SiglipTextConfig):
         super().__init__(config)
+        self.width = config.hidden_size
         self.text_model = CustomSiglipTextTransformer(config)
         self.post_init()
 
@@ -93,6 +126,8 @@ class SiglipTextModel(SiglipPreTrainedModel):
     def set_input_embeddings(self, value):
         self.text_model.embeddings.token_embedding = value
 
+    def prompt_forward(self, prompt, task_tokenized_prompts):
+        return self.text_model.prompt_forward(prompt, task_tokenized_prompts)
 
     def forward(
         self,

@@ -78,6 +78,9 @@ if __name__ == "__main__":
 
     # Separate processing for text and image
     text_inputs = tokenizer(prompts, return_tensors="pt", padding='max_length', max_length=64, truncation=True)
+    print(tokenizer(tokenizer.eos_token,return_tensors="pt", padding='max_length', max_length=64, truncation=True))
+    print(text_inputs['input_ids'][0])
+
     image_inputs = image_processor(images=image, return_tensors="pt")
     print("Tokenizer type:", tokenizer.__class__.__name__)
     print("Image processor type:", image_processor.__class__.__name__)

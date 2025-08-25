@@ -20,6 +20,7 @@ from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
 from wrappers.SigLip2.SigLip2Model import Siglip2Model
+from wrappers.tokenizer import PETokenizer, SigLip2Tokenizer
 from transformers import AutoConfig, AutoTokenizer
 from training import training_functions
 from training.loss import *
@@ -46,7 +47,19 @@ def get_model(config):
             return model
         
         elif model_name == "siglip2":
-            raise NotImplementedError(f"Model {model_name} is not implemented for VPT tuning.")
+            base_model = Siglip2Model(
+                config=AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                num_prompts=config.NUM_VISUAL_PROMPT
+            )
+            base_model.load_model(path="./hf_models/model.pth", map_location="cpu")
+            model = CustomModel(
+                n_ctx=config.NUM_TEXT_CNTX,
+                tasknames=config.TASK_NAMES,
+                classnames=config.CLASSES,
+                model=base_model,
+                tokenizer=get_tokenizer(config)
+            )
+            return model
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
@@ -70,12 +83,14 @@ def get_model(config):
         raise NotImplementedError(f"Model {model_name} is not implemented for VVPT tuning.")
     else:
         raise ValueError(f"Unknown tuning method: {tuning}")
+    
 def get_tokenizer(config):
-    if config.MODEL.lower() == 'pecore':        
-        return transforms.get_text_tokenizer(32)
+    if config.MODEL.lower() == 'pecore':
+        return PETokenizer.get_instance(32)
     elif config.MODEL.lower() == 'siglip2':
-        tokenizer = AutoTokenizer.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
-        return tokenizer
+        return SigLip2Tokenizer.get_instance(64)
+
+
 def get_dataset(config, split, transform=None, augmentation_transform=None):
 
     balance_task = None
@@ -596,7 +611,7 @@ def main():
 
     ################ Get the loss function #####################################################
 
-    weights = [training_set.get_class_weights(i, normalize=True).to(DEVICE) for i in range(3)]
+    weights = [training_set.get_class_weights(i, normalize=i==0).to(DEVICE) for i in range(3)]
     loss_fn = get_loss_fn(config, weights=weights)
 
     ####################### CREATE OPTIMIZER ###################################################
@@ -686,10 +701,7 @@ def main():
         task_text_features = []
         for task_prompts in config.TEXT_CLASSES_PROMPT:
             for classes in task_prompts:
-                if config.MODEL.lower() == 'siglip2':                
-                    text = tokenizer(classes, return_tensors="pt", padding='max_length', max_length=64, truncation=True)['input_ids'].to(DEVICE)
-                else:
-                    text = tokenizer(classes).to(DEVICE)
+                text = tokenizer(classes).to(DEVICE)
                 classes_features = F.normalize(model.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
                 task_text_features.append(classes_features)
 
@@ -733,7 +745,7 @@ def main():
             w_i = running_mean.get_by_index(i)
             if w_i is None:
                 w_i=1.0
-            w.append((1.0 / max(w_i, 1e-8)) * data_task_weight[i])
+            w.append((1.0 / max(w_i, 1e-8))* data_task_weight[i])
         task_weight = torch.tensor(w, device=DEVICE)
         task_weight = task_weight / task_weight.sum()
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")

@@ -10,14 +10,12 @@ class VisionPromptLearner(nn.Module):
         self.num_prompt = num_prompt
         self.emb_size = emb_size        
         self.prompt_tokens = nn.Parameter(torch.randn(num_prompt, emb_size))
-        self.prompt_position_embeddings = nn.Parameter(torch.randn(num_prompt, emb_size))        
         self.is_cls_present = is_cls_present
 
     def forward(self, x):
         batch_size = x.shape[0]
 
         cntx = self.prompt_tokens.unsqueeze(0).expand(batch_size, -1, -1) # [B, num_prompt, D]
-        cntx = cntx + self.prompt_position_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
         if not self.is_cls_present:
             x = torch.cat([cntx, x], dim=1)
         else:
@@ -54,7 +52,7 @@ class PromptLearner(nn.Module):
 
         super().__init__()
         n_cls = len(classnames) 
-        dtype = textModel.token_embedding.weight.dtype  # Get the dtype from the text model
+        dtype = textModel.get_token_embedding_layer().weight.dtype  # Get the dtype from the text model
 
         # Generate the prompt placeholders for the tokenizer
         prompt_prefix = " ".join(["X"] * n_ctx)
@@ -67,7 +65,7 @@ class PromptLearner(nn.Module):
 
         tokenized_prompts = torch.cat([tokenizer(p) for p in prompts]) # Tokenize the prompts using the tokenizer for all the classes
         with torch.no_grad():
-            embedding = textModel.token_embedding(tokenized_prompts).type(dtype) # Compute the embeddings for the tokenized prompts using the text model
+            embedding = textModel.get_token_embedding_layer()(tokenized_prompts).type(dtype) # Compute the embeddings for the tokenized prompts using the text model
 
         
         self.register_buffer("token_prefix", embedding[:, :1, :])          # SOS
@@ -104,7 +102,7 @@ class TaskPromptLearner(nn.Module):
     def __init__(self, n_ctx, tasknames, text_model, tokenizer, verbose=False):
         super().__init__()
         n_task = len(tasknames)
-        dtype = text_model.token_embedding.weight.dtype  # Get the dtype from the text model
+        dtype = text_model.get_token_embedding_layer().weight.dtype  # Get the dtype from the text model
         ctx_dim = text_model.width
         
          # Generate n_ctx context vectors for the each task
@@ -127,7 +125,7 @@ class TaskPromptLearner(nn.Module):
 
         tokenized_prompts = torch.cat([tokenizer(p) for p in prompts])      # Tokenize the prompts using the tokenizer for all the tasks
         with torch.no_grad():
-            embedding = text_model.token_embedding(tokenized_prompts).type(dtype) # Compute the embeddings for the tokenized prompts using the text model
+            embedding = text_model.get_token_embedding_layer()(tokenized_prompts).type(dtype) # Compute the embeddings for the tokenized prompts using the text model
 
 
         # NOTE: it allows to access token_prefix and token_suffix by self.token_prefix and self.token_suffix in a static way
@@ -211,14 +209,16 @@ class CustomModel(nn.Module):
         self.task_tokenized_prompts = self.task_prompt_learner.tokenized_prompts
 
         self.model = model    
-        self.image_encoder = model.visual
+        self.image_encoder = model.visual if hasattr(model, "visual") else model.vision_model
         self.text_model = model.text_model
-        self.logit_scale = model.logit_scale
-        self.dtype = model.dtype
-        self.image_size = model.image_size
+        
+        self.logit_scale = model.logit_scale if hasattr(model, 'logit_scale') else torch.ones(1, dtype=torch.float32).cuda()
+        self.logit_bias = model.logit_bias if hasattr(model, 'logit_bias') else torch.zeros(1, dtype=torch.float32).cuda()
+        self.dtype = model.dtype if hasattr(model, 'dtype') else torch.float32
+        self.image_size = model.image_size if hasattr(model, 'image_size') else 224
         self.n_ctx = n_ctx
-        self.ctx_dim = model.text_model.width
-        self.task_feat_dim = model.text_model.width
+        self.ctx_dim = model.text_model.width if hasattr(model.text_model, 'width') else 768
+        self.task_feat_dim = model.text_model.width if hasattr(model.text_model, 'width') else 768
 
         self.prompt_gen = PromptGen(
             'lin',
@@ -255,8 +255,8 @@ class CustomModel(nn.Module):
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)    # Normalize the text features
 
 
-        logit_scale = self.logit_scale.exp()
-        logits = logit_scale * image_features @ text_features.t()                   # Compute the logits using the image features and the text features
+                
+        logits = self.logit_scale.exp() * image_features @ text_features.t()  + self.logit_bias               # Compute the logits using the image features and the text features
 
         return logits
 

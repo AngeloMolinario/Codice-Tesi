@@ -79,6 +79,9 @@ class TextTransformer(nn.Module):
         else:
             self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
+    def get_token_embedding_layer(self):
+        return self.token_embedding
+    
     def build_causal_mask(self):
         # lazily create causal attention mask, with full attention between the tokens
         # pytorch uses additive attention mask; fill with -inf
@@ -161,6 +164,8 @@ class TextTransformer(nn.Module):
             return pooled, tokens
 
         return pooled
+    
+
     def prompt_forward(self, prompts, tokenized_prompts):
         """
         Forward pass for the text transformer with prompts.

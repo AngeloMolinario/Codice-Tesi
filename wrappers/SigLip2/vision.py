@@ -42,7 +42,7 @@ class CustomSiglipVisionTransformer(nn.Module):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         interpolate_pos_encoding: Optional[bool] = False,
-    ) -> BaseModelOutputWithPooling:
+    ):
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -68,12 +68,7 @@ class CustomSiglipVisionTransformer(nn.Module):
         else:
             pooler_output = None
 
-        return BaseModelOutputWithPooling(
-            last_hidden_state=last_hidden_state,
-            pooler_output=pooler_output,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-        )
+        return pooler_output
 
 class SiglipVisionModel(SiglipPreTrainedModel):
     config: SiglipVisionConfig
@@ -109,7 +104,7 @@ class SiglipVisionModel(SiglipPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         interpolate_pos_encoding: bool = False,
-    ) -> BaseModelOutputWithPooling:
+    ):
 
         return self.vision_model(
             pixel_values=pixel_values,

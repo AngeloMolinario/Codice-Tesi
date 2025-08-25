@@ -157,11 +157,10 @@ class Siglip2Model(SiglipPreTrainedModel):
             output_attentions=self.config.output_attentions,
             output_hidden_states=self.config.output_hidden_states,
         )
-        pooled_output = vision_outputs.pooler_output
         if normalize:
             #pooled_output = pooled_output / pooled_output.norm(p=2, dim=-1, keepdim=True)
-            pooled_output = nn.functional.normalize(pooled_output, dim=-1) if normalize else pooled_output
-        return pooled_output
+            vision_outputs = nn.functional.normalize(vision_outputs, dim=-1) if normalize else vision_outputs
+        return vision_outputs
 
     def forward(self, text, image):
         '''Return the cosine similarity between text and image features.
