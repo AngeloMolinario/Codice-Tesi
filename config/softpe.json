@@ -1,0 +1,171 @@
+{
+    "TUNING" : "softcpt",
+    "MODEL"  : "pecore",
+    "TASK"   : -1,
+
+    "NUM_VISUAL_PROMPT" : 0,
+    "NUM_TEXT_CNTX" : 20,
+    "TASK_NAMES": ["age estimation from face", "gender recognition from face", "emotion classification from face expression"],
+    "CLASSES": [
+        ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
+        ["male", "female"],
+        ["surprise", "fear", "disgust", "happy", "sad", "angry", "neutral"]
+    ],
+    "TEXT_CLASSES_PROMPT": 
+    [
+        [
+            [ 
+                "a close-up portrait photo of a person who appears to be a newborn (0–2 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a newborn (0–2 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a newborn (0–2 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a newborn (0–2 years old), soft lighting",
+                "a candid portrait of a person who appears to be a newborn (0–2 years old), minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of a person who appears to be a young child (3–9 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a young child (3–9 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a young child (3–9 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a young child (3–9 years old), soft lighting",
+                "a candid portrait of a person who appears to be a young child (3–9 years old), minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of a person who appears to be a teenager (10–19 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a teenager (10–19 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a teenager (10–19 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a teenager (10–19 years old), soft lighting",
+                "a candid portrait of a person who appears to be a teenager (10–19 years old), minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of a person who appears to be a young adult (20–29 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a young adult (20–29 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a young adult (20–29 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a young adult (20–29 years old), soft lighting",
+                "a candid portrait of a person who appears to be a young adult (20–29 years old), minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of a person who appears to be an adult in their 30s (30–39 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be an adult in their 30s (30–39 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be an adult in their 30s (30–39 years old), centered face",
+                "a detailed facial photograph of a person who appears to be an adult in their 30s (30–39 years old), soft lighting",
+                "a candid portrait of a person who appears to be an adult in their 30s (30–39 years old), minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of a person who appears to be in their 40s (40–49 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 40s (40–49 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 40s (40–49 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 40s (40–49 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 40s (40–49 years old), minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of a person who appears to be in their 50s (50–59 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 50s (50–59 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 50s (50–59 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 50s (50–59 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 50s (50–59 years old), minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of a person who appears to be in their 60s (60–69 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 60s (60–69 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 60s (60–69 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 60s (60–69 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 60s (60–69 years old), minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of a person who appears to be in their 70s or older (70+ years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 70s or older (70+ years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 70s or older (70+ years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 70s or older (70+ years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 70s or older (70+ years old), minimal shadows"
+            ]
+        ],
+        [
+            [ 
+                "a close-up portrait photo of an adult person who appears male-presenting, face clearly visible, plain background",
+                "a studio headshot of an adult person who appears male-presenting, looking at the camera, neutral expression",
+                "a passport-style photo of an adult person who appears male-presenting, centered face, plain background",
+                "a detailed facial photograph of an adult person who appears male-presenting, soft lighting",
+                "a candid portrait of an adult person who appears male-presenting, minimal shadows"
+            ],
+            [
+                "a close-up portrait photo of an adult person who appears female-presenting, face clearly visible, plain background",
+                "a studio headshot of an adult person who appears female-presenting, looking at the camera, neutral expression",
+                "a passport-style photo of an adult person who appears female-presenting, centered face, plain background",
+                "a detailed facial photograph of an adult person who appears female-presenting, soft lighting",
+                "a candid portrait of an adult person who appears female-presenting, minimal shadows"
+            ]
+        ],
+        [
+            [ 
+                "a close-up portrait photo of a person showing surprised expression, raised brows, wide eyes, open mouth, face clearly visible",
+                "a studio headshot of a person showing surprised expression, raised brows, wide eyes, open mouth, plain background",
+                "a detailed facial photograph of a person showing surprised expression, raised brows, wide eyes, open mouth, soft lighting",
+                "a candid portrait of a person showing surprised expression, raised brows, wide eyes, open mouth, minimal shadows",
+                "a passport-style photo of a person showing surprised expression, raised brows, wide eyes, open mouth"
+            ],
+            [
+                "a close-up portrait photo of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth, face clearly visible",
+                "a studio headshot of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth, plain background",
+                "a detailed facial photograph of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth, soft lighting",
+                "a candid portrait of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth, minimal shadows",
+                "a passport-style photo of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth"
+            ],
+            [
+                "a close-up portrait photo of a person showing disgusted expression, nose wrinkling, upper lip raised, face clearly visible",
+                "a studio headshot of a person showing disgusted expression, nose wrinkling, upper lip raised, plain background",
+                "a detailed facial photograph of a person showing disgusted expression, nose wrinkling, upper lip raised, soft lighting",
+                "a candid portrait of a person showing disgusted expression, nose wrinkling, upper lip raised, minimal shadows",
+                "a passport-style photo of a person showing disgusted expression, nose wrinkling, upper lip raised"
+            ],
+            [
+                "a close-up portrait photo of a person showing happy expression, smile, raised cheeks, lip corners pulled up, face clearly visible",
+                "a studio headshot of a person showing happy expression, smile, raised cheeks, lip corners pulled up, plain background",
+                "a detailed facial photograph of a person showing happy expression, smile, raised cheeks, lip corners pulled up, soft lighting",
+                "a candid portrait of a person showing happy expression, smile, raised cheeks, lip corners pulled up, minimal shadows",
+                "a passport-style photo of a person showing happy expression, smile, raised cheeks, lip corners pulled up"
+            ],
+            [
+                "a close-up portrait photo of a person showing sad expression, downturned lip corners, inner brows raised, face clearly visible",
+                "a studio headshot of a person showing sad expression, downturned lip corners, inner brows raised, plain background",
+                "a detailed facial photograph of a person showing sad expression, downturned lip corners, inner brows raised, soft lighting",
+                "a candid portrait of a person showing sad expression, downturned lip corners, inner brows raised, minimal shadows",
+                "a passport-style photo of a person showing sad expression, downturned lip corners, inner brows raised"
+            ],
+            [
+                "a close-up portrait photo of a person showing angry expression, brows lowered and drawn together, tense lips, face clearly visible",
+                "a studio headshot of a person showing angry expression, brows lowered and drawn together, tense lips, plain background",
+                "a detailed facial photograph of a person showing angry expression, brows lowered and drawn together, tense lips, soft lighting",
+                "a candid portrait of a person showing angry expression, brows lowered and drawn together, tense lips, minimal shadows",
+                "a passport-style photo of a person showing angry expression, brows lowered and drawn together, tense lips"
+            ],
+            [
+                "a close-up portrait photo of a person showing neutral expression, relaxed facial muscles, no pronounced expression, face clearly visible",
+                "a studio headshot of a person showing neutral expression, relaxed facial muscles, no pronounced expression, plain background",
+                "a detailed facial photograph of a person showing neutral expression, relaxed facial muscles, no pronounced expression, soft lighting",
+                "a candid portrait of a person showing neutral expression, relaxed facial muscles, no pronounced expression, minimal shadows",
+                "a passport-style photo of a person showing neutral expression, relaxed facial muscles, no pronounced expression"
+            ]
+        ]
+    ],
+    "NAMED_TRAINABLE_PARAMETERS": [
+        "prompt_learner",
+        "task_prompt_learner", 
+        "prompt_gen"
+    ],
+
+    "DATASET_NAMES": {
+        "-1" : ["FairFace","RAF-DB"],
+        "0"  : ["FairFace"],   
+        "1"  : ["RAF-DB"],
+        "2"  : ["RAF-DB"]    
+    },    
+    "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
+    "BALANCE_TASK" : {"2" : 0.33},
+    "BATCH_SIZE" : 512,
+    "NUM_WORKERS" : 4,
+    "LR" : 1e-3,
+    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/EMD10_abs_CEEm_CEGe",
+    "PREFETCH_FACTOR" : 2,
+    "VERBOSE": true,
+    "USE_TQDM":true,
+    "EPOCHS" : 20
+}

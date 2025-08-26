@@ -13,12 +13,12 @@ class OrdinalAgeLossEMD(nn.Module):
         this is not true as the cost of misclassifying an age group can vary significantly. For example, misclassifying a 10-19 year old as 70+ is likely
         to be more detrimental than misclassifying them as 20-29. The EMD loss helps to address this issue by considering the ordinal nature of age groups.
     '''
-    def __init__(self, num_classes=9, class_frequencies=None, lambda_ordinal=0.3, use_squared_emd=False):
+    def __init__(self, num_classes=9, class_frequencies=None, lambda_ordinal=0.3, use_squared_emd=True):
         super(OrdinalAgeLossEMD, self).__init__()
         self.num_classes = num_classes
         self.lambda_ordinal = lambda_ordinal
         self.use_squared_emd = use_squared_emd
-        
+        self.inverse_factor = 1/math.log(num_classes)
         if class_frequencies is not None:
             self.class_weights = class_frequencies
         else:
@@ -80,7 +80,7 @@ class OrdinalAgeLossEMD(nn.Module):
             predictions, 
             targets, 
             weight=self.class_weights.to(predictions.device)
-        )
+        ) * self.inverse_factor
                 
         probs = F.softmax(predictions, dim=1)
                 
@@ -105,7 +105,7 @@ class CrossEntropyLoss():
             self.class_weights = weights
         else:
             self.class_weights = torch.ones(num_classes).to('cuda')
-        self.factor = math.log(len(weights)) if weights is not None else 1.0
+        self.factor = math.log(num_classes)
 
     def __call__(self, logit, true_labels):
         loss = self.ce(logit, true_labels)  / self.factor
