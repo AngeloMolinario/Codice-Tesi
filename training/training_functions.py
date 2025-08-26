@@ -54,7 +54,7 @@ def get_model(config):
                 tasknames=config.TASK_NAMES,
                 classnames=config.CLASSES,
                 model=base_model,
-                tokenizer=transforms.get_text_tokenizer(base_model.text_model.context_length)
+                tokenizer=get_tokenizer(config)
             )
             return model
         
