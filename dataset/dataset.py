@@ -96,87 +96,6 @@ def map_age_to_group(age):
         print(f"Warning: Cannot convert age '{age}' to float: {e}")
         return -1
     
-def map_age_to_group_(age):
-    """
-    Map individual age values to age group categories.
-
-    Age groups:
-    - 0: 0-2 years
-    - 1: 3-9 years
-    - 2: 10-19 years
-    - 3: 20-29 years
-    - 4: 30-39 years
-    - 5: 40-49 years
-    - 6: 50-59 years
-    - 7: 60-69 years
-    - 8: 70+ years
-
-    Args:
-        age: individual age value or age category string
-
-    Returns:
-        age group category (0-8) or -1 for missing values
-    """
-    if age == -1:  # Missing value
-        return -1
-
-    # Check if age is already a category (contains "-" or "more")
-    if isinstance(age, str):
-        age_str = str(age).lower()
-        if "-" in age_str or "more" in age_str or "+" in age_str:
-            if "0-2" == age_str:
-                return 0
-            elif "3-9" == age_str:
-                return 0
-            elif "10-19" == age_str:
-                return 1
-            elif "20-29" == age_str:
-                return 2
-            elif "30-39" == age_str:
-                return 2
-            elif "40-49" == age_str:
-                return 3
-            elif "50-59" == age_str:
-                return 3
-            elif "60-69" == age_str:
-                return 4
-            elif "70" in age_str or ("more" in age_str or "+" in age_str):
-                return 4
-            else:
-                return -1  # Unknown category format
-
-    # If age is numeric, perform standard mapping
-    try:
-        age_num = float(age)
-        age_rounded = round(age_num)
-
-        if 0 <= age_rounded <= 2:
-            return 0
-        elif 3 <= age_rounded <= 9:
-            return 0
-        elif 10 <= age_rounded <= 19:
-            return 1
-        elif 20 <= age_rounded <= 29:
-            return 2
-        elif 30 <= age_rounded <= 39:
-            return 2
-        elif 40 <= age_rounded <= 49:
-            return 3
-        elif 50 <= age_rounded <= 59:
-            return 3
-        elif 60 <= age_rounded <= 69:
-            return 4
-        elif age_rounded >= 70:
-            return 4
-        else:
-            print(f"Warning: Age {age_num} (rounded to {age_rounded}) is out of expected range")
-            return -1
-
-    except (ValueError, TypeError) as e:
-        print(f"Warning: Cannot convert age '{age}' to float: {e}")
-        return -1
-
-import torch
 
 class WeightCalculationMixin:
     """
@@ -186,7 +105,90 @@ class WeightCalculationMixin:
     - _get_task_counts_and_total_len(self)
     - self.verbose attribute
     """
-    def get_class_weights(self, task_idx: int, normalize: bool = True):
+    def get_class_weights(self, task_idx: int, weighting_method: str = 'normalized'):
+        """
+        Calcola i pesi delle classi per l'indice del task specificato.
+
+        Args:
+            task_idx: Indice del task (0=età, 1=genere, 2=emozione).
+            weighting_method: Strategia per il calcolo dei pesi.
+                - 'default': Frequenza inversa -> total / (n_classes * count).
+                - 'normalized': Come 'default', ma normalizzato con massimo = 1.0 (consigliato).
+                - 'inverse_sqrt': Radice quadrata inversa della frequenza -> 1 / sqrt(count).
+                                  Normalizzato con massimo = 1.0 per stabilità.
+
+        Returns:
+            Un tensore di pesi per le classi.
+        """
+        if not hasattr(self, 'class_weights_cache'):
+            self.class_weights_cache = {}
+        # <--- CORREZIONE: Aggiornata la chiave della cache
+        if self.class_weights_cache.get((task_idx, weighting_method)) is not None:
+            return self.class_weights_cache[(task_idx, weighting_method)]
+
+        if self.verbose:
+            print(f"Computing class weights for task {task_idx} with method '{weighting_method}'")
+
+        all_task_data = self._get_all_labels_for_task(task_idx)
+
+        class_counts = {}
+        total_valid_samples = 0
+        for value in all_task_data:
+            if value != -1: # Ignora le etichette non valide
+                class_counts[value] = class_counts.get(value, 0) + 1
+                total_valid_samples += 1
+
+        if total_valid_samples == 0:
+            if self.verbose:
+                print(f"Warning: No valid samples found for task idx {task_idx}")
+            return None
+
+        class_indices = sorted(class_counts.keys())
+        weights_array = []
+
+        # --- SELEZIONE DELLA STRATEGIA DI PESATURA ---
+        if weighting_method in ('default', 'normalized'):
+            # Metodo classico basato sulla frequenza inversa
+            for class_idx in class_indices:
+                count = class_counts[class_idx]
+                weight = total_valid_samples / (len(class_counts) * count)
+                weights_array.append(weight)
+
+        elif weighting_method == 'inverse_sqrt':
+            # <--- NUOVO: Metodo aggressivo con radice quadrata inversa
+            # Particolarmente utile per classi con code lunghe (molto rare)
+            for class_idx in class_indices:
+                count = class_counts[class_idx]
+                # Aggiunto clamp_min(1) per evitare errori con conteggi a zero, sebbene già filtrati
+                weight = 1.0 / math.sqrt(max(count, 1))
+                weights_array.append(weight)
+        
+        else:
+            raise ValueError(f"Unknown weighting_method: '{weighting_method}'. "
+                             f"Available options are 'default', 'normalized', 'inverse_sqrt'.")
+
+        # --- APPLICAZIONE DELLA NORMALIZZAZIONE (SE RICHIESTA DALLA STRATEGIA) ---
+        if weighting_method in ('normalized', 'inverse_sqrt'):
+            max_weight = max(weights_array) if weights_array else 0
+            if max_weight > 0:
+                weights_array = [w / max_weight for w in weights_array]
+                if self.verbose:
+                    print(f"Weights have been normalized (max=1.0)")
+            elif self.verbose:
+                print(f"Warning: max_weight is zero, skipping normalization")
+        
+        weights_tensor = torch.tensor(weights_array, dtype=torch.float32)
+        
+        # Aggiorna la cache
+        self.class_weights_cache[(task_idx, weighting_method)] = weights_tensor
+
+        if self.verbose:
+            print(f"Class distribution (task {task_idx}): {dict(sorted(class_counts.items()))}")
+            final_weights_rounded = [round(w, 3) for w in weights_tensor.tolist()]
+            print(f"Final class weights (task {task_idx}, method '{weighting_method}'): {final_weights_rounded}")
+
+        return weights_tensor
+    def get_class_weights2(self, task_idx: int, normalize: bool = True):
         """Compute inverse-frequency class weights for the specified task index (0=age, 1=gender, 2=emotion).
         
         Args:
