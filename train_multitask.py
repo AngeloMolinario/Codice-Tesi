@@ -460,15 +460,6 @@ def main():
     data_task_weight = training_set.get_task_weights()
     print(f"Task weights: {data_task_weight}")
 
-    print(f"\n[Epoch 0 - VAL]", flush=True)
-    val_loss, val_acc, all_preds_list, all_labels_list, _ = val_fn(model, val_loader, loss_fn, DEVICE, torch.ones(3).to(DEVICE), config, text_features)
-    for t in range(num_tasks):
-        print(f"  Task '{task_names[t]}': Loss = {val_loss[t]:.4f}, Accuracy = {val_acc[t]:.4f}")
-        tracker.update_confusion(t, all_preds_list[t], all_labels_list[t], 100)
-    print(f"  Total raw Loss: {sum(val_loss[:-1]):.4f}, Total weighted loss {val_loss[-1]:.4f}, Mean Accuracy : {sum(val_acc)/num_tasks:.4f}")
-    tracker.update_accuracy(None, sum(val_acc)/num_tasks, train=False, mean=True)
-    tracker.save_confusion_matrices(100)
-
     tracker = MultitaskTracker(
         num_tasks=num_tasks,
         output_dir=output_dir,
