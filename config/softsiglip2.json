@@ -4,8 +4,8 @@
     "TASK"   : -1,
 
     "NUM_VISUAL_PROMPT" : 0,
-    "NUM_TEXT_CNTX" : 20,
-    "TASK_NAMES": ["age estimation from face", "gender recognition from face", "emotion classification from face expression"],
+    "NUM_TEXT_CNTX" : 50,
+    "TASK_NAMES": ["age estimation from facial features", "gender recognition from face", "emotion classification from face expression"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
         ["male", "female"],
@@ -154,18 +154,18 @@
 
     "DATASET_NAMES": {
         "-1" : ["FairFace", "RAF-DB"],
-        "0"  : ["FairFace" , "VggFace2"],   
+        "0"  : ["FairFace"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
     "BATCH_SIZE" : 512,
-    "NUM_WORKERS" : 4,
-    "PREFETCH_FACTOR" : 2,
+    "NUM_WORKERS" : 3,
     "LR" : 1e-3,
-    "OUTPUT_DIR" : "../TRAIN/siglip2/SoftCPT/EMD10_CEEm_CEGe",
+    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/EMD15_CEEm_CEGe",
+    "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
-    "USE_TQDM":false,
-    "EPOCHS" : 20
-}
+    "USE_TQDM":true,
+    "EPOCHS" : 5
+} 

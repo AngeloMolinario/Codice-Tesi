@@ -1,6 +1,6 @@
 {
     "TUNING" : "vpt",
-    "MODEL"  : "pecore",
+    "MODEL"  : "siglip2",
     "TASK"   : -1,
 
     "NUM_VISUAL_PROMPT" : 50,
@@ -153,7 +153,7 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB"],
+        "-1" : ["FairFace", "RAF-DB", "VggFace2"],
         "0"  : ["FairFace" , "VggFace2"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
@@ -161,7 +161,7 @@
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
     "BATCH_SIZE" : 128,
-    "NUM_WORKERS" : 8,
+    "NUM_WORKERS" : 4,
     "PREFETCH_FACTOR" : 1,
     "LR" : 1e-3,
     "OUTPUT_DIR" : "../TRAIN/PECore/VPT/EMD10_CEEm_CEGe_FULL",

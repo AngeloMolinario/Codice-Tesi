@@ -24,6 +24,9 @@ class OrdinalAgeLossEMD(nn.Module):
         else:
             self.class_weights = torch.ones(num_classes).to('cuda')
 
+        self.ce = nn.CrossEntropyLoss(weight=self.class_weights)
+        self.softmax = nn.Softmax(dim=1)
+
     def compute_emd_loss(self, probs, targets, squared=False):
         """
         Compute Earth Mover's Distance between target and predicted distribution.
@@ -49,7 +52,7 @@ class OrdinalAgeLossEMD(nn.Module):
             emd_loss = torch.sum(torch.abs(pred_cdf - target_cdf), dim=1)
         
         return emd_loss
-
+    
     def compute_weighted_emd_loss(self, probs, targets, squared=False):
         """
         Wighted version of EMD loss with class weights
@@ -74,16 +77,15 @@ class OrdinalAgeLossEMD(nn.Module):
         weighted_emd_loss = torch.mean(sample_weights * emd_losses)
         
         return weighted_emd_loss
-
+    
     def forward(self, predictions, targets):        
-        ce_loss = F.cross_entropy(
+        ce_loss = self.ce(
             predictions, 
-            targets, 
-            weight=self.class_weights.to(predictions.device)
+            targets            
         ) * self.inverse_factor
-                
-        probs = F.softmax(predictions, dim=1)
-                
+
+        probs = self.softmax(predictions)
+
         weighted_emd_loss = self.compute_weighted_emd_loss(probs, targets, squared=self.use_squared_emd)
                 
         if self.use_squared_emd:            

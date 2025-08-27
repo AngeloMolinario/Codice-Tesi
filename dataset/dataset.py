@@ -115,7 +115,7 @@ class WeightCalculationMixin:
                 - 'default': Frequenza inversa -> total / (n_classes * count).
                 - 'normalized': Come 'default', ma normalizzato con massimo = 1.0 (consigliato).
                 - 'inverse_sqrt': Radice quadrata inversa della frequenza -> 1 / sqrt(count).
-                                  Normalizzato con massimo = 1.0 per stabilità.
+                - 'normalized_inverse_sqrt': Radice quadrata inversa della frequenza, normalizzata con massimo = 1.0.
 
         Returns:
             Un tensore di pesi per le classi.
@@ -154,7 +154,7 @@ class WeightCalculationMixin:
                 weight = total_valid_samples / (len(class_counts) * count)
                 weights_array.append(weight)
 
-        elif weighting_method == 'inverse_sqrt':
+        elif weighting_method == 'inverse_sqrt' or weighting_method == 'normalized_inverse_sqrt':
             # <--- NUOVO: Metodo aggressivo con radice quadrata inversa
             # Particolarmente utile per classi con code lunghe (molto rare)
             for class_idx in class_indices:
@@ -168,7 +168,7 @@ class WeightCalculationMixin:
                              f"Available options are 'default', 'normalized', 'inverse_sqrt'.")
 
         # --- APPLICAZIONE DELLA NORMALIZZAZIONE (SE RICHIESTA DALLA STRATEGIA) ---
-        if weighting_method in ('normalized', 'inverse_sqrt'):
+        if weighting_method in ('normalized', 'normalized_inverse_sqrt'):
             max_weight = max(weights_array) if weights_array else 0
             if max_weight > 0:
                 weights_array = [w / max_weight for w in weights_array]
@@ -188,6 +188,7 @@ class WeightCalculationMixin:
             print(f"Final class weights (task {task_idx}, method '{weighting_method}'): {final_weights_rounded}")
 
         return weights_tensor
+
     def get_class_weights2(self, task_idx: int, normalize: bool = True):
         """Compute inverse-frequency class weights for the specified task index (0=age, 1=gender, 2=emotion).
         
@@ -359,7 +360,7 @@ from torch.utils.data import Dataset
 
 class BaseDataset(Dataset, WeightCalculationMixin):
     def __init__(self, root, transform=None, split="train", verbose=False,
-                 limit_fraction=0.7, subset_seed=2025, only_for="vggface2"):
+                 limit_fraction=1.0, subset_seed=2025, only_for="vggface2"):
         self.verbose = verbose
         self.root = root
         self.transform = transform
@@ -634,9 +635,7 @@ class TaskBalanceDataset(Dataset, WeightCalculationMixin):
             dataset_path = os.path.join(datasets_root, dataset_name)
             if os.path.exists(os.path.join(dataset_path, split)):
                 try:
-                    dataset = BaseDataset(root=dataset_path, transform=transform, split=split, limit_fraction=0.5,     # <-- 70%
-                                           subset_seed=2025,        # riproducibile
-                                           only_for="vggface2")
+                    dataset = BaseDataset(root=dataset_path, transform=transform, split=split, verbose=verbose)
                     self.datasets.append(dataset)
                     self.dataset_lengths.append(len(dataset))
                     self.cumulative_lengths.append(self.cumulative_lengths[-1] + len(dataset))

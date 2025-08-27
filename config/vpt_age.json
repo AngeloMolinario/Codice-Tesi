@@ -1,11 +1,11 @@
 {
     "TUNING" : "vpt",
     "MODEL"  : "pecore",
-    "TASK"   : -1,
+    "TASK"   : 0,
 
-    "NUM_VISUAL_PROMPT" : 50,
+    "NUM_VISUAL_PROMPT" : 10,
     "NUM_TEXT_CNTX" : 0,
-    "TASK_NAMES": ["age estimation", "gender recognition", "emotion classification"],
+    "TASK_NAMES": ["age group estimation from facial features", "gender recognition from face", "emotion classification from face expression"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
         ["male", "female"],
@@ -154,16 +154,16 @@
 
     "DATASET_NAMES": {
         "-1" : ["FairFace", "RAF-DB"],
-        "0"  : ["FairFace" , "VggFace2"],   
+        "0"  : ["FairFace"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
     "BATCH_SIZE" : 128,
-    "NUM_WORKERS" : 8,
+    "NUM_WORKERS" : 4,
     "PREFETCH_FACTOR" : 1,
-    "LR" : 1e-3,
+    "LR" : 4e-5,
     "OUTPUT_DIR" : "../TRAIN/PECore/VPT/EMD10_CEEm_CEGe_FULL",
     "VERBOSE": true,
     "USE_TQDM":true,

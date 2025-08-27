@@ -38,7 +38,7 @@ def get_loss_fn(config, weights=None):
         1. Gender loss
         2. Emotion loss
     '''
-    age_loss = OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights[0], lambda_ordinal=1.0)
+    age_loss = OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights[0], lambda_ordinal=1.5)
 
     gender_loss = CrossEntropyLoss(num_classes=len(config.CLASSES[1]), weights=weights[1])
     emotion_loss = CrossEntropyLoss(num_classes=len(config.CLASSES[2]), weights=weights[2])
@@ -55,7 +55,7 @@ def get_augmentation_transform(config):
         T.Resize((224,224)),
         T.RandomHorizontalFlip(p=0.5),
         T.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.05),
-        T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8))], p=0.5),
+        T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 0.4))], p=0.5),
         T.ToTensor()
     ]
 
@@ -345,9 +345,9 @@ def main():
     # we use inverse_sqrt as parameters to get the invecerse rooted weights to give more weight to 
     # rare classes and they are normalized so that the max weight is 1.0 and the other are a fraction of it
     weights = [
-        training_set.get_class_weights(0, "inverse_sqrt").to(DEVICE),   
-        training_set.get_class_weights(1, "default").to(DEVICE),        
-        training_set.get_class_weights(2, "inverse_sqrt").to(DEVICE),
+        training_set.get_class_weights(0, "default").to(DEVICE),   
+        training_set.get_class_weights(1, "normalized_inverse_sqrt").to(DEVICE),        
+        training_set.get_class_weights(2, "normalized_inverse_sqrt").to(DEVICE),
         ]
     
     loss_fn = get_loss_fn(config, weights=weights)

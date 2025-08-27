@@ -287,7 +287,8 @@ def multitask_val_fn(model, dataloader, loss_fn, device, task_weight, config, te
                 total_loss = 0.0
 
                 for i in range(len(loss_fn)):
-                    loss_i, pred_i = loss_fn[i](logits_by_task[i], labels[:, i], return_predicted_label=True)
+                    loss_i = loss_fn[i](logits_by_task[i], labels[:, i])
+                    pred_i = logits_by_task[i].argmax(dim=1)
                     losses_sums[i] += loss_i.detach()
 
                     valid_mask = labels[:, i] != -1
@@ -477,18 +478,18 @@ test_dataset = MultiDataset(
     all_datasets=False, 
     verbose=True
 )
-weight = [test_dataset.get_class_weights(i) for i in range(3)]
+weight = [test_dataset.get_class_weights(i, 'inverse_sqrt') for i in range(3)]
 
 
-dataloader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=2, prefetch_factor=2)
+dataloader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=4, prefetch_factor=1)
 
 # ---------------------------------------------------------
 # Loss e pesi dei task
 # ---------------------------------------------------------
 loss_fn = [
-    MaskedLoss(OrdinalAgeLoss(num_classes=9), -1),
+    MaskedLoss(OrdinalAgeLossEMD(num_classes=9), -1),
     MaskedLoss(CrossEntropyLoss(2), -1),
-    MaskedLoss(FocalLoss(7, None, 1), -1)
+    MaskedLoss(CrossEntropyLoss(7), -1)
 ]
 task_weight = torch.ones(3, device="cuda")
 
