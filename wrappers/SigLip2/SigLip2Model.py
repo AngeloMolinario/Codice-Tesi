@@ -2,6 +2,8 @@ from typing import Optional
 import torch
 from torch import nn
 from transformers import AutoConfig
+
+from wrappers.promptopt.prompt_learner import VisionPromptLearner
 from .vision import CustomSiglipVisionTransformer, SiglipVisionModel
 from .text import SiglipTextModel
 import os
@@ -182,6 +184,123 @@ class Siglip2Model(SiglipPreTrainedModel):
         return logits_per_image
 
 
+class Siglip2Vision(nn.Module):
+
+    config: SiglipConfig
+
+    def __init__(self, config: SiglipConfig, num_prompt=0):
+        super().__init__()
+        vision_config = config.vision_config
+        
+        if not isinstance(vision_config, SiglipVisionConfig):
+            raise TypeError(
+                "config.vision_config is expected to be of type SiglipVisionConfig but is of type"
+                f" {type(config)}."
+            )
+        
+
+        # Added for compatibility with the HF default configuration
+        config.torch_dtype = "float32"        
+        config.vision_config.torch_dtype = "float32"
+        self.config = config            
+        
+        # If num prompt is 0 than the model is the pure baseline
+        self.vision_model = SiglipVisionModel(vision_config, num_prompt=num_prompt)
+        
+        # Added to maintain the backward compatibility for the weights loading        
+        self.vision_model = self.vision_model.vision_model
+
+        self.logit_scale = nn.Parameter(torch.randn(1))
+        self.logit_bias = nn.Parameter(torch.randn(1))
+        self.register_buffer("text_features", torch.empty(0))
+
+        self._vpt = []
+
+    def get_image_features(self, image, normalize=True):
+        vision_outputs = self.vision_model(
+            pixel_values=image,
+            output_attentions=self.config.output_attentions,
+            output_hidden_states=self.config.output_hidden_states,
+        )
+        if normalize:
+            vision_outputs = nn.functional.normalize(vision_outputs, dim=-1) if normalize else vision_outputs
+        return vision_outputs
+
+    def get_task_image_features(self, task_id, image, normalize=True):
+        self.vision_model.prompt_learner = self._vpt[task_id].to(self.vision_model.device)
+        vision_outputs = self.vision_model(
+            pixel_values=image,
+            output_attentions=self.config.output_attentions,
+            output_hidden_states=self.config.output_hidden_states,
+        )
+
+        if normalize:
+            vision_outputs = nn.functional.normalize(vision_outputs, dim=-1) if normalize else vision_outputs
+        return vision_outputs
+    
+    def forward(self, image):
+
+        if len(self._vpt) <= 1:
+            logit = self.logit_scale.exp() * self.get_image_features(image) @ self.text_features.t()
+            return torch.split(logit, [9, 2, 7], dim=-1)
+        
+        text_features = torch.split(self.text_features, [9, 2, 7], dim=0)
+        age_logit = self.logit_scale.exp() * self.get_task_image_features(0, image) @ text_features[0].t()
+        gender_logit = self.logit_scale.exp() * self.get_task_image_features(1, image) @ text_features[1].t()
+        emotion_logit = self.logit_scale.exp() * self.get_task_image_features(2, image) @ text_features[2].t()
+        
+        return age_logit, gender_logit, emotion_logit
+
+    def set_text_features(self, text_features):
+        self.text_features = text_features
+
+    def load_VPT_token(self, ckpt_path, device):
+        checkpoint = torch.load(ckpt_path, map_location=device)
+        if 'prompt_learner' in checkpoint:
+            # Inizializza un'istanza di VisionPromptLearner
+            vpt = VisionPromptLearner(
+                emb_size=self.visual.embed_dim,
+                num_prompt=self.num_prompt,
+                is_cls_present=False
+            )
+            # Carica i pesi salvati nel prompt learner
+            vpt.load_state_dict(checkpoint['prompt_learner'])
+            # Aggiungi il prompt learner alla lista e spostalo sul dispositivo
+            self._vpt.append(vpt.to(device))
+            self.vision_model.prompt_learner = vpt.to(device)
+            print(f"VPT token loaded from {ckpt_path}")
+        else:
+            print(f"No VPT token found in {ckpt_path}")
+
+    def load_baseline(self, path, map_location, repo_id="google/siglip2-base-patch16-224", filename="model.safetensors"):
+        # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
+
+        # Check if the file exists
+        if not os.path.exists(path):
+            print("Model not found. Downloading it from the hub...")
+            # If not, download it from the hub
+            sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path))
+            # Convert the model to .pth format
+            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path))
+        # Load the model
+        state_dict = torch.load(os.path.join(os.path.dirname(path), "model.pth"), map_location=map_location)
+        result = self.load_state_dict(state_dict, strict=False)
+        
+        # Check for missing or mismatching keys during the loading of the state_dict
+        if result.missing_keys:
+            print("[WARNING] The loaded models miss the following keys, ensure to train it on a downstream task:")
+            for k in result.missing_keys:
+                print(f"  {k}")
+        if result.unexpected_keys:
+            print("[WARNING] The loaded models have unexpected keys:")
+            for k in result.unexpected_keys:
+                print(f"  {k}")
+
+        
+        print(f"LOGIT SCALE: {self.logit_scale} - exp {self.logit_scale.exp()}")
+        print(f"LOGIT BIAS: {self.logit_bias}")
+
+        return result
 
 
 if __name__ == "__main__":

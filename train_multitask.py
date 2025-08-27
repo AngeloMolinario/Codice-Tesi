@@ -345,7 +345,7 @@ def main():
     # we use inverse_sqrt as parameters to get the invecerse rooted weights to give more weight to 
     # rare classes and they are normalized so that the max weight is 1.0 and the other are a fraction of it
     weights = [
-        training_set.get_class_weights(0, "default").to(DEVICE),   
+        training_set.get_class_weights(0, "normalized_inverse_sqrt").to(DEVICE),   
         training_set.get_class_weights(1, "normalized_inverse_sqrt").to(DEVICE),        
         training_set.get_class_weights(2, "normalized_inverse_sqrt").to(DEVICE),
         ]
@@ -475,7 +475,7 @@ def main():
                 w_i=1.0
             w.append((1.0 / max(w_i, 1e-8))* data_task_weight[i])
         max_raw = max(w)
-        task_weight = torch.tensor([r / sum(w) for r in w], device=DEVICE)
+        task_weight = torch.tensor([r / max_raw for r in w], device=DEVICE)
 
 
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")

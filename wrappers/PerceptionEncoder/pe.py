@@ -85,10 +85,6 @@ class PECore(nn.Module):
         for name, param in self.visual.state_dict().items():
             state_dict[f'visual.{name}'] = param
     
-        # Salva tutti i parametri del text model
-        for name, param in self.text_model.state_dict().items():
-            state_dict[f'text_model.{name}'] = param
-    
         # Salva il logit_scale
         state_dict['logit_scale'] = self.logit_scale.detach().cpu()
     
@@ -138,6 +134,8 @@ class PECore_Vision(nn.Module):
         self.num_prompt = num_prompt
         self._vpt = []       
         self.register_buffer('text_features', torch.empty(0))
+        self.logit_scale = nn.Parameter(torch.ones([]))
+
 
     def get_image_features(self, x, normalize=True):
         features = self.visual(x)
@@ -156,7 +154,7 @@ class PECore_Vision(nn.Module):
     
     def forward(self, image):
 
-        if len(self._vpt) == 1:
+        if len(self._vpt) <= 1:
             logit = self.logit_scale.exp() * self.get_image_features(image) @ self.text_features.t()
             return torch.split(logit, [9, 2, 7], dim=-1)
         
@@ -198,16 +196,25 @@ class PECore_Vision(nn.Module):
             ckpt_path (str): Percorso del checkpoint.
             device (torch.device): Dispositivo su cui caricare il modello.
         """
-        self.visual.load_ckpt(fetch_pe_checkpoint("PE-Core-B16-224", ckpt_path))
-        
-        _sd = torch.load(ckpt_path, map_location='cpu')
+        path = fetch_pe_checkpoint("PE-Core-B16-224")
+
+        _sd = torch.load(path, weights_only=True)
         if "state_dict" in _sd:
             _sd = _sd["state_dict"]
         elif "weights" in _sd:
             _sd = _sd["weights"]
 
-        # Cerca il parametro logit_scale
-        if "logit_scale" in _sd:
-            self.logit_scale.data.copy_(_sd["logit_scale"])
-        elif "logit_scale" in _sd.get("module", {}):
-            self.logit_scale.data.copy_(_sd["module"]["logit_scale"])
+        _sd = {k.replace("module.", ""): v for k, v in _sd.items()}
+
+        self.logit_scale.data.copy_(_sd["logit_scale"].to(device))
+
+        if any(k.startswith("visual.") for k in _sd):
+            _sd = {k.replace("visual.", ""): v for k, v in _sd.items() if "visual" in k}
+
+        m, u = self.visual.load_state_dict(_sd, strict=False)
+
+        if (m or u): 
+            print(f"Missing keys for loading vision encoder: {m}")
+            print(f"Unexpected keys for loading vision encoder: {u}")
+
+        print(f"logit scale {self.logit_scale.item()}")
