@@ -37,7 +37,7 @@ def get_loss_fn(config, weights=None):
     if weights is None:
         weights = torch.ones(len(config.CLASSES[task]))
     if task == 0:
-        return OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights, lambda_ordinal=1.5)
+        return OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights, lambda_ordinal=config.EMD_WEIGHT)
     elif task == 1:
         return CrossEntropyLoss(num_classes=len(config.CLASSES[1]), weights=weights)
     elif task == 2:
@@ -326,15 +326,9 @@ def main():
         classes_features = F.normalize(model.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
         task_text_features.append(classes_features)
 
-
-    model.save(
-        save_path=os.path.join(config.OUTPUT_DIR, f"ckpt/initial_model.pt"),
-        text_features=torch.stack(task_text_features, dim=0),
-        text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_text_features.pt"),
-    )
-    text_features = torch.stack(task_text_features, dim=0)
-    #print(f"Text prompts by task: {config.TEXT_CLASSES_PROMPT}")
+    text_features = torch.stack(task_text_features, dim=0)    
     print(f"Text features shape: {text_features.shape}")
+    torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
 
 
     for epoch in range(config.EPOCHS):
@@ -390,17 +384,14 @@ def main():
             if val_loss[0] < best_val_loss:
                 best_val_loss = val_loss[0]
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
-                torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_model.pt"))
+                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bestval.pt"))
+
             if val_acc[0] > best_accuracy:
                 best_accuracy = val_acc[0]
                 print(f"New best validation accuracy: {best_accuracy:.4f}. Saving model...")
-                torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_accuracy_model.pt"))
-            epochs_without_improvement = 0
-            if config.TUNING.lower() == "softcpt":
-                model.save_text_features(
-                    text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/best_soft_cpt_text_features.pt"),
-                    normalize=True
-                )
+                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bestacc.pt"))
+
+            epochs_without_improvement = 0            
         else:
             epochs_without_improvement += 1
             print(f"No improvement in validation loss. Epochs without improvement: {epochs_without_improvement}/{patience}")

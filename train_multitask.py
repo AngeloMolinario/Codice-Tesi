@@ -38,7 +38,7 @@ def get_loss_fn(config, weights=None):
         1. Gender loss
         2. Emotion loss
     '''
-    age_loss = OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights[0], lambda_ordinal=1.5)
+    age_loss = OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights[0], lambda_ordinal=config.EMD_WEIGHT)
 
     gender_loss = CrossEntropyLoss(num_classes=len(config.CLASSES[1]), weights=weights[1])
     emotion_loss = CrossEntropyLoss(num_classes=len(config.CLASSES[2]), weights=weights[2])
@@ -435,7 +435,6 @@ def main():
     val_fn   = multitask_val_fn
 
     running_mean = RunningMeans(['age', 'gender', 'emotion'], alpha=0.95)
-
     text_features = None
     if config.TUNING.lower() != 'softcpt':
         tokenizer = get_tokenizer(config)
@@ -445,15 +444,9 @@ def main():
             for classes in task_prompts:
                 text = tokenizer(classes).to(DEVICE)
                 classes_features = F.normalize(model.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
-                task_text_features.append(classes_features)
-
-
-        model.save(
-            save_path=os.path.join(config.OUTPUT_DIR, f"ckpt/initial_model.pt"),
-            text_features=torch.stack(task_text_features, dim=0),
-            text_features_path=os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_text_features.pt"),
-        )
+                task_text_features.append(classes_features)        
         text_features = torch.stack(task_text_features, dim=0)
+        torch.save(text_features, os.path.join(config.OUTPUT_DIR, "cktp/text_features.pt"))
         print(f"Text features shape: {text_features.shape}")
 
 
@@ -482,7 +475,7 @@ def main():
                 w_i=1.0
             w.append((1.0 / max(w_i, 1e-8))* data_task_weight[i])
         max_raw = max(w)
-        task_weight = torch.tensor([r / max(max_raw, 1e-8) for r in w], device=DEVICE)
+        task_weight = torch.tensor([r / sum(w) for r in w], device=DEVICE)
 
 
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")
@@ -570,11 +563,20 @@ def main():
             if val_loss[-1] < best_val_loss:
                 best_val_loss = val_loss[-1]
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
-                torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_model.pt"))
+
+                if config.TUNING.lower() == 'softcpt':                
+                    torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bacc.pt"))
+                else:
+                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bacc.pt"))
+
             if sum(val_acc)/num_tasks > best_accuracy:
                 best_accuracy = sum(val_acc)/num_tasks
                 print(f"New best validation accuracy: {best_accuracy:.4f}. Saving model...")
-                torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/best_accuracy_model.pt"))
+            
+            if config.TUNING.lower() == 'softcpt':                
+                torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bacc.pt"))
+            else:
+                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bacc.pt"))
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
@@ -582,8 +584,7 @@ def main():
         if epochs_without_improvement >= patience:
             print("Early stopping triggered.")
             break
-        torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))
-        scheduler.step()
+        #scheduler.step()
         lr_history.append(optimizer.param_groups[0]['lr'])
 
         # Plot della variazione del learning rate

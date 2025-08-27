@@ -82,7 +82,7 @@ class OrdinalAgeLossEMD(nn.Module):
         ce_loss = self.ce(
             predictions, 
             targets            
-        ) * self.inverse_factor
+        ) #* self.inverse_factor
 
         probs = self.softmax(predictions)
 

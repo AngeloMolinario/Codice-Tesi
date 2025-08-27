@@ -224,7 +224,6 @@ class ResidualAttentionBlock(nn.Module):
         x = x + self.drop_path2(self.ls_2(self.mlp(self.ln_2(x))))
         return x
 
-
 class Transformer(nn.Module):
     def __init__(
         self,
@@ -288,7 +287,6 @@ class Transformer(nn.Module):
                 break
 
         return x
-
 
 class VisionTransformer(nn.Module):
     def __init__(
@@ -541,14 +539,6 @@ class VisionTransformer(nn.Module):
 
         return x
 
-
-
-
-
-
-
-
-
 class TextTransformer(nn.Module):
     def __init__(
         self,
@@ -694,8 +684,6 @@ class TextTransformer(nn.Module):
             return pooled, tokens
 
         return pooled
-
-
 
 class CLIP(TextTransformer):
     def __init__(
