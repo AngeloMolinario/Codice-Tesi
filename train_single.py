@@ -263,7 +263,7 @@ def main():
     )
 
     # Get the loss function
-    weights = training_set.get_class_weights(config.TASK, "default" if config.TASK==0 else 'normalized_inverse_sqrt').to(DEVICE)
+    weights = training_set.get_class_weights(config.TASK, 'normalized_inverse_sqrt').to(DEVICE)
     loss_fn = get_loss_fn(config, weights=weights)
 
     # Create optimizer
@@ -378,6 +378,7 @@ def main():
 
         tracker.save_confusion_matrices(epoch)
         tracker.plot_losses()
+        tracker.plot_accuracy()
         tracker.save()
 
         if val_loss[0] < best_val_loss or val_acc[0] > best_accuracy:
@@ -404,15 +405,15 @@ def main():
         scheduler.step()
         lr_history.append(optimizer.param_groups[0]['lr'])
 
-    # Plot learning rate schedule
-    plt.figure()
-    plt.plot(range(len(lr_history)), lr_history, marker='o')
-    plt.xlabel('Epoch')
-    plt.ylabel('Learning Rate')
-    plt.title('Learning Rate Schedule')
-    plt.grid(True)
-    plt.savefig(os.path.join(config.OUTPUT_DIR, "learning_rate_plot.png"))
-    plt.close()
+        # Plot learning rate schedule
+        plt.figure()
+        plt.plot(range(len(lr_history)), lr_history, marker='o')
+        plt.xlabel('Epoch')
+        plt.ylabel('Learning Rate')
+        plt.title('Learning Rate Schedule')
+        plt.grid(True)
+        plt.savefig(os.path.join(config.OUTPUT_DIR, "learning_rate_plot.png"))
+        plt.close()
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from torchvision.transforms import transforms as T
 
 from transformers import AutoConfig
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 import seaborn as sns
 
 from argparse import ArgumentParser
@@ -52,8 +52,8 @@ def print_accuracy_table(top1_acc, top2_acc):
 def plot_error_distribution(all_true_labels, pred_labels, class_names, output_dir):
     """
     Crea e salva istogrammi per ogni classe vera, mostrando:
-    - Numero di predizioni corrette.
-    - Numero di errori verso ogni altra classe.
+    - Numero di predizioni corrette (bin in posizione della classe corretta).
+    - Numero di errori verso ogni altra classe (bin ordinati).
     
     Args:
         all_true_labels (list): etichette vere.
@@ -87,9 +87,21 @@ def plot_error_distribution(all_true_labels, pred_labels, class_names, output_di
         error_counts[target_class] = 0  # Rimuovi i corretti dagli errori
 
         # Prepara i dati per il grafico
-        labels = ["Corretto"] + [f"Errore verso {class_names[i]}" for i in range(num_classes) if i != target_class]
-        values = [correct_count] + [error_counts[i] for i in range(num_classes) if i != target_class]
-        colors = ["green"] + ["red"] * (len(values) - 1)  # Verde per corretto, rosso per errori
+        labels = []
+        values = []
+        colors = []
+
+        # Inserisci "Corretto" nella posizione corretta
+        labels.insert(target_class, "Corretto")
+        values.insert(target_class, correct_count)
+        colors.insert(target_class, "green")
+
+        # Inserisci gli errori nelle posizioni corrette
+        for i in range(num_classes):
+            if i != target_class:
+                labels.insert(i, f"Errore verso {class_names[i]}")
+                values.insert(i, error_counts[i])
+                colors.insert(i, "red")
 
         # Crea il grafico
         plt.figure(figsize=(12, 6))
@@ -137,12 +149,13 @@ def save_confusion_matrices_as_images(confusion_matrices, class_names_per_task, 
     os.makedirs(output_dir, exist_ok=True)
 
     for task_idx, cm in enumerate(confusion_matrices):
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False,
-                    xticklabels=class_names_per_task[task_idx],
-                    yticklabels=class_names_per_task[task_idx])
+        if cm is None:
+            continue
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names_per_task[task_idx])
+        fig, ax = plt.subplots(figsize=(8, 6))
+        disp.plot(ax=ax, cmap='Blues', xticks_rotation=45)
         title_map = ["Age", "Gender", "Emotion"]
-        plt.title(f"Confusion Matrix – {title_map[task_idx]}")
+        plt.title(f"Confusion Matrix - {title_map[task_idx]}")
         plt.xlabel("Predicted Labels")
         plt.ylabel("True Labels")
         file_path = os.path.join(output_dir, f"confusion_matrix_{title_map[task_idx].lower()}.png")
@@ -156,20 +169,19 @@ def count_parameters(model):
 
 def load_model(model_type, num_prompt, ckpt_path, vpt_ckpt, device):
     if model_type == 'PECoreBase':
-        model = PECore.from_config(
-            "PE-Core-B16-224", pretrained=True, num_prompt=0
-        ).to(device)
+        model = PECore_Vision(
+            vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
+            num_prompt=num_prompt
+        )
+        model.load_baseline(ckpt_path, device)
         return model, get_image_transform(224), PETokenizer(32)
 
     elif model_type == 'Siglip2Base':
-        model = Siglip2Model(
-            config=AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
-            num_prompts=0
+        model = Siglip2Vision(
+            AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+            num_prompt=num_prompt
         )
-        model.load_model(
-            path="./hf_models/model.pth",
-            map_location=device
-        )
+        model.load_baseline(ckpt_path, device)
         image_transforms = T.Compose([
             T.Resize((224, 224)),
             T.ToTensor(),
@@ -182,8 +194,6 @@ def load_model(model_type, num_prompt, ckpt_path, vpt_ckpt, device):
             vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
             num_prompt=num_prompt
         )
-        if ckpt_path is None or vpt_ckpt is None:
-            raise ValueError("For PECoreVPT you must provide --model_ckpt_path and --vpt_ckpt_path.")
         model.load_baseline(ckpt_path, device)
         model.load_VPT_token(vpt_ckpt, device)
         return model, get_image_transform(224), PETokenizer(32)
@@ -276,60 +286,60 @@ def get_text_features(text_model, tokenizer, normalize=True):
     PROMPTS = [
         [  # Age (9)
             [
-                "a close-up portrait photo of a person who appears to be a newborn (0–2 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a newborn (0–2 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a newborn (0–2 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a newborn (0–2 years old), soft lighting",
-                "a candid portrait of a person who appears to be a newborn (0–2 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be a newborn (0-2 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a newborn (0-2 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a newborn (0-2 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a newborn (0-2 years old), soft lighting",
+                "a candid portrait of a person who appears to be a newborn (0-2 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be a young child (3–9 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a young child (3–9 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a young child (3–9 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a young child (3–9 years old), soft lighting",
-                "a candid portrait of a person who appears to be a young child (3–9 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be a young child (3-9 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a young child (3-9 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a young child (3-9 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a young child (3-9 years old), soft lighting",
+                "a candid portrait of a person who appears to be a young child (3-9 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be a teenager (10–19 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a teenager (10–19 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a teenager (10–19 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a teenager (10–19 years old), soft lighting",
-                "a candid portrait of a person who appears to be a teenager (10–19 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be a teenager (10-19 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a teenager (10-19 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a teenager (10-19 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a teenager (10-19 years old), soft lighting",
+                "a candid portrait of a person who appears to be a teenager (10-19 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be a young adult (20–29 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a young adult (20–29 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a young adult (20–29 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a young adult (20–29 years old), soft lighting",
-                "a candid portrait of a person who appears to be a young adult (20–29 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be a young adult (20-29 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a young adult (20-29 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a young adult (20-29 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a young adult (20-29 years old), soft lighting",
+                "a candid portrait of a person who appears to be a young adult (20-29 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be an adult in their 30s (30–39 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be an adult in their 30s (30–39 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be an adult in their 30s (30–39 years old), centered face",
-                "a detailed facial photograph of a person who appears to be an adult in their 30s (30–39 years old), soft lighting",
-                "a candid portrait of a person who appears to be an adult in their 30s (30–39 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be an adult in their 30s (30-39 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be an adult in their 30s (30-39 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be an adult in their 30s (30-39 years old), centered face",
+                "a detailed facial photograph of a person who appears to be an adult in their 30s (30-39 years old), soft lighting",
+                "a candid portrait of a person who appears to be an adult in their 30s (30-39 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be in their 40s (40–49 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 40s (40–49 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 40s (40–49 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 40s (40–49 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 40s (40–49 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be in their 40s (40-49 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 40s (40-49 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 40s (40-49 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 40s (40-49 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 40s (40-49 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be in their 50s (50–59 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 50s (50–59 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 50s (50–59 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 50s (50–59 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 50s (50–59 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be in their 50s (50-59 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 50s (50-59 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 50s (50-59 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 50s (50-59 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 50s (50-59 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be in their 60s (60–69 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 60s (60–69 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 60s (60–69 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 60s (60–69 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 60s (60–69 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be in their 60s (60-69 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 60s (60-69 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 60s (60-69 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 60s (60-69 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 60s (60-69 years old), minimal shadows"
             ],
             [
                 "a close-up portrait photo of a person who appears to be in their 70s or older (70+ years old), face clearly visible, neutral background",
@@ -434,43 +444,6 @@ def compute_logit(image_features, text_features, model):
         scale_bias = model.logit_bias
     return scale_logit * (image_features @ text_features.t()) + scale_bias
 
-def validate_baseline(model, text_features, dataloader, device, use_tqdm):
-    model.eval()
-    total_correct_top1 = [0, 0, 0]
-    total_correct_top2 = [0, 0, 0]
-    total_samples = [0, 0, 0]
-
-    all_true_labels = [[] for _ in range(3)]
-    all_pred_labels = [[] for _ in range(3)]
-
-    iterator = tqdm(dataloader) if use_tqdm else dataloader
-    with torch.no_grad():
-        for i, (images, labels) in enumerate(iterator):
-            images = images.to(device)
-            labels = labels.to(device)
-
-            image_features = get_image_features(model, images, normalize=True)
-            logits = compute_logit(image_features, text_features, model)  # [B, 18]
-            logits_split = torch.split(logits, [9, 2, 7], dim=-1)
-
-            for task_idx, task_logits in enumerate(logits_split):
-                task_labels = labels[:, task_idx]
-                top2_preds = task_logits.topk(2, dim=-1).indices
-
-                total_correct_top1[task_idx] += (top2_preds[:, 0] == task_labels).sum().item()
-                total_correct_top2[task_idx] += ((top2_preds == task_labels.unsqueeze(1)).sum(dim=-1) > 0).sum().item()
-                total_samples[task_idx] += task_labels.size(0)
-
-                all_true_labels[task_idx].extend(task_labels.cpu().tolist())
-                all_pred_labels[task_idx].extend(top2_preds[:, 0].cpu().tolist())
-
-            if not use_tqdm and i % 30 == 0:
-                print(f"{i}/{len(dataloader)} batches processed", end='\r')
-
-    top1_accuracy = [total_correct_top1[i] / max(1, total_samples[i]) for i in range(3)]
-    top2_accuracy = [total_correct_top2[i] / max(1, total_samples[i]) for i in range(3)]
-    return top1_accuracy, top2_accuracy, all_true_labels, all_pred_labels
-
 def validate(model, dataloader, device, use_tqdm):
     model.eval()
     total_correct_top1 = [0, 0, 0]
@@ -492,12 +465,16 @@ def validate(model, dataloader, device, use_tqdm):
                 task_labels = labels[:, task_idx]
                 top2_preds = task_logits.topk(2, dim=-1).indices
 
-                total_correct_top1[task_idx] += (top2_preds[:, 0] == task_labels).sum().item()
-                total_correct_top2[task_idx] += ((top2_preds == task_labels.unsqueeze(1)).sum(dim=-1) > 0).sum().item()
-                total_samples[task_idx] += task_labels.size(0)
+                valid_indices = task_labels != -1
+                valid_task_labels = task_labels[valid_indices]
+                valid_top2_preds = top2_preds[valid_indices]
 
-                all_true_labels[task_idx].extend(task_labels.cpu().tolist())
-                all_pred_labels[task_idx].extend(top2_preds[:, 0].cpu().tolist())
+                total_correct_top1[task_idx] += (valid_top2_preds[:, 0] == valid_task_labels).sum().item()
+                total_correct_top2[task_idx] += ((valid_top2_preds == valid_task_labels.unsqueeze(1)).sum(dim=-1) > 0).sum().item()
+                total_samples[task_idx] += valid_task_labels.size(0)
+
+                all_true_labels[task_idx].extend(valid_task_labels.cpu().tolist())
+                all_pred_labels[task_idx].extend(valid_top2_preds[:, 0].cpu().tolist())
 
             if not use_tqdm and i % 30 == 0:
                 print(f"{i}/{len(dataloader)} batches processed", end='\r')
@@ -559,12 +536,7 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
         num_workers=min(4, os.cpu_count() or 0)
     )
 
-    # Scegli la validazione corretta
-    base_models = {'PECoreBase', 'Siglip2Base'}
-    if model_type in base_models:
-        top1_acc, top2_acc, all_true_labels, all_pred_labels = validate_baseline(model, text_features, dataloader, device, use_tqdm)
-    else:
-        top1_acc, top2_acc, all_true_labels, all_pred_labels = validate(model, dataloader, device, use_tqdm)
+    top1_acc, top2_acc, all_true_labels, all_pred_labels = validate(model, dataloader, device, use_tqdm)
 
     print_accuracy_table(top1_acc, top2_acc)
 
@@ -586,8 +558,7 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
         confusion_mats.append(cm)
         print(f"\nConfusion Matrix for Task {task_names[task_idx]}:\n{cm}")
 
-    # Salva le confusion matrices solo se sono state create
-    save_confusion_matrices_as_images([cm for cm in confusion_mats if cm is not None], CLASSES, os.path.join(output_path, "confusion_matrices"))
+    save_confusion_matrices_as_images(confusion_mats, CLASSES, os.path.join(output_path, "confusion_matrices"))
 
     # Istogrammi degli errori per ciascun task
     plot_error_distribution(all_true_labels[0], all_pred_labels[0], CLASSES[0], os.path.join(output_path, "age_error_distributions"))

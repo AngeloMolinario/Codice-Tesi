@@ -558,6 +558,7 @@ def main():
         tracker.update_accuracy(None, sum(val_acc)/num_tasks, train=False, mean=True)
         tracker.save_confusion_matrices(epoch)
         tracker.plot_losses()
+        tracker.plot_accuracy()
         tracker.save()        
         if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
             if val_loss[-1] < best_val_loss:

@@ -98,6 +98,34 @@ class MultitaskTracker:
                 plt.savefig(os.path.join(cm_dir, f"{task_name}_epoch{epoch+1}.png"))
                 plt.close(fig)
 
+    def plot_accuracy(self):
+        plot_dir = os.path.join(self.output_dir, "plot")
+        epochs = range(1, len(self.accuracy['train'][0]) + 1)
+        # All tasks in one plot
+        plt.figure(figsize=(10, 6))
+        for i, task_name in enumerate(self.task_names):
+            plt.plot(epochs, self.accuracy['train'][i], label=f"{task_name} Train")
+            plt.plot(epochs, self.accuracy['val'][i], '--', label=f"{task_name} Val")
+        plt.xlabel("Epoch")
+        plt.ylabel("Accuracy")
+        plt.title("Accuracy per Task")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(plot_dir, "all_tasks_accuracy.png"))
+        plt.close()
+
+        for i, task_name in enumerate(self.task_names):
+            plt.figure()
+            plt.plot(epochs, self.accuracy['train'][i], label="Train")
+            plt.plot(epochs, self.accuracy['val'][i], label="Val")
+            plt.xlabel("Epoch")
+            plt.ylabel("Accuracy")
+            plt.title(f"Accuracy - {task_name}")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(plot_dir, f"{task_name}_accuracy.png"))
+            plt.close()
+
     def plot_losses(self):
         plot_dir = os.path.join(self.output_dir, "plot")
         epochs = range(1, len(self.loss['train'][0]) + 1)

@@ -5,7 +5,7 @@
 
     "NUM_VISUAL_PROMPT" : 50,
     "NUM_TEXT_CNTX" : 0,
-    "TASK_NAMES": ["age estimation", "gender recognition", "emotion classification"],
+    "TASK_NAMES": ["age estimation from facial features", "gender recognition from facial features", "emotion classification from facial expression"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
         ["male", "female"],
@@ -15,60 +15,60 @@
     [
         [
             [ 
-                "a close-up portrait photo of a person who appears to be a newborn (0–2 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a newborn (0–2 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a newborn (0–2 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a newborn (0–2 years old), soft lighting",
-                "a candid portrait of a person who appears to be a newborn (0–2 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be a newborn (0-2 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a newborn (0-2 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a newborn (0-2 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a newborn (0-2 years old), soft lighting",
+                "a candid portrait of a person who appears to be a newborn (0-2 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be a young child (3–9 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a young child (3–9 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a young child (3–9 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a young child (3–9 years old), soft lighting",
-                "a candid portrait of a person who appears to be a young child (3–9 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be a young child (3-9 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a young child (3-9 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a young child (3-9 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a young child (3-9 years old), soft lighting",
+                "a candid portrait of a person who appears to be a young child (3-9 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be a teenager (10–19 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a teenager (10–19 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a teenager (10–19 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a teenager (10–19 years old), soft lighting",
-                "a candid portrait of a person who appears to be a teenager (10–19 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be a teenager (10-19 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a teenager (10-19 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a teenager (10-19 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a teenager (10-19 years old), soft lighting",
+                "a candid portrait of a person who appears to be a teenager (10-19 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be a young adult (20–29 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a young adult (20–29 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a young adult (20–29 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a young adult (20–29 years old), soft lighting",
-                "a candid portrait of a person who appears to be a young adult (20–29 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be a young adult (20-29 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be a young adult (20-29 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be a young adult (20-29 years old), centered face",
+                "a detailed facial photograph of a person who appears to be a young adult (20-29 years old), soft lighting",
+                "a candid portrait of a person who appears to be a young adult (20-29 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be an adult in their 30s (30–39 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be an adult in their 30s (30–39 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be an adult in their 30s (30–39 years old), centered face",
-                "a detailed facial photograph of a person who appears to be an adult in their 30s (30–39 years old), soft lighting",
-                "a candid portrait of a person who appears to be an adult in their 30s (30–39 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be an adult in their 30s (30-39 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be an adult in their 30s (30-39 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be an adult in their 30s (30-39 years old), centered face",
+                "a detailed facial photograph of a person who appears to be an adult in their 30s (30-39 years old), soft lighting",
+                "a candid portrait of a person who appears to be an adult in their 30s (30-39 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be in their 40s (40–49 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 40s (40–49 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 40s (40–49 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 40s (40–49 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 40s (40–49 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be in their 40s (40-49 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 40s (40-49 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 40s (40-49 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 40s (40-49 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 40s (40-49 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be in their 50s (50–59 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 50s (50–59 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 50s (50–59 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 50s (50–59 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 50s (50–59 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be in their 50s (50-59 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 50s (50-59 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 50s (50-59 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 50s (50-59 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 50s (50-59 years old), minimal shadows"
             ],
             [
-                "a close-up portrait photo of a person who appears to be in their 60s (60–69 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 60s (60–69 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 60s (60–69 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 60s (60–69 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 60s (60–69 years old), minimal shadows"
+                "a close-up portrait photo of a person who appears to be in their 60s (60-69 years old), face clearly visible, neutral background",
+                "a studio headshot of a person who appears to be in their 60s (60-69 years old), looking at the camera",
+                "a passport-style photo of a person who appears to be in their 60s (60-69 years old), centered face",
+                "a detailed facial photograph of a person who appears to be in their 60s (60-69 years old), soft lighting",
+                "a candid portrait of a person who appears to be in their 60s (60-69 years old), minimal shadows"
             ],
             [
                 "a close-up portrait photo of a person who appears to be in their 70s or older (70+ years old), face clearly visible, neutral background",
