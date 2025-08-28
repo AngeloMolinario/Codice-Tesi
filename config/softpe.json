@@ -153,20 +153,22 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB", "MiviaGender"],
+        "-1" : ["FairFace", "RAF-DB", "MiviaGender", "CelebA_HQ", "AffectNet", "LFW", "TestDataset"],
         "0"  : ["FairFace"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
     "EMD_WEIGHT" : 1.0,
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
-    "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 512,
+    "BALANCE_TASK" : {"0" : 0.33,
+                     "1" : 0.33,
+                     "2" : 0.34},
+    "BATCH_SIZE" : 256,
     "NUM_WORKERS" : 3,
-    "LR" : 1e-3,
-    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/EMD10",
+    "LR" : 3e-3,
+    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/emd10",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
-    "USE_TQDM":true,
-    "EPOCHS" : 5
+    "USE_TQDM": false,
+    "EPOCHS" : 20
 }

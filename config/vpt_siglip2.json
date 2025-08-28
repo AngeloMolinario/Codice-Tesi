@@ -146,6 +146,7 @@
             ]
         ]
     ],
+    "TEXT_FEATURES_PATH": "./text_features/siglip2_text_features.pt",
     "NAMED_TRAINABLE_PARAMETERS": [
         "prompt_learner",
         "task_prompt_learner", 
@@ -153,7 +154,7 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB", "VggFace2"],
+        "-1" : ["FairFace", "RAF-DB", "MiviaGender"],
         "0"  : ["FairFace" , "VggFace2"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
@@ -163,9 +164,9 @@
     "BATCH_SIZE" : 128,
     "NUM_WORKERS" : 4,
     "PREFETCH_FACTOR" : 1,
-    "LR" : 1e-3,
-    "OUTPUT_DIR" : "../TRAIN/PECore/VPT/EMD10_CEEm_CEGe_FULL",
+    "LR" : 4e-4,
+    "OUTPUT_DIR" : "../TRAIN/PECore/VPT/emd10",
     "VERBOSE": true,
-    "USE_TQDM":true,
-    "EPOCHS" : 5
+    "USE_TQDM":false,
+    "EPOCHS" : 20
 }

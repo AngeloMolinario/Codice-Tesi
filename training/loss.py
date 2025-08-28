@@ -113,17 +113,15 @@ class OrdinalAgeLossEMD(nn.Module):
                  num_classes=9,
                  class_frequencies=None,
                  lambda_ordinal=0.5,
-                 use_squared_emd=True,
                  age_bins=("0-2","3-9","10-19","20-29","30-39","40-49","50-59","60-69","70+"),
                  plus_cap=90,          # limite superiore per "70+"
                  normalize_D=True,     # normalizza D su [0,1] dividendo per D.max()
-                 omega=2,              # ω nell'Eq.16 (XEMD2 usa ω=2)
+                 omega=2.0,              # ω nell'Eq.16 (XEMD2 usa ω=2)
                  mu=-0.25             # μ nell'Eq.16 (paper: μ negativo per "premiare" vicini)
                  ):
         super().__init__()
         self.num_classes = num_classes
         self.lambda_ordinal = float(lambda_ordinal)
-        self.use_squared_emd = use_squared_emd  # mantenuta per retrocompatibilità (non usata nel nuovo termine)
         self.omega = float(omega)
         self.mu = float(mu)
 
@@ -134,7 +132,6 @@ class OrdinalAgeLossEMD(nn.Module):
         else:
             self.class_weights = torch.ones(num_classes, dtype=torch.float32)
 
-        self.ce = nn.CrossEntropyLoss(weight=None, reduction="mean")  # applichiamo weight a runtime (device-safe)
         self.softmax = nn.Softmax(dim=1)
 
         # ---- COSTRUISCI D (statica) ----
@@ -228,7 +225,7 @@ class CrossEntropyLoss():
         self.factor = math.log(num_classes)
 
     def __call__(self, logit, true_labels):
-        loss = self.ce(logit, true_labels)  / self.factor
+        loss = self.ce(logit, true_labels) # / self.factor
 
         return loss
 

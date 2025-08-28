@@ -305,7 +305,7 @@ def main():
     training_set =  get_dataset(config=config,
                                split="train",
                                transform=get_image_transform(config),
-                               augmentation_transform=get_augmentation_transform(config)
+                               augmentation_transform=None#get_augmentation_transform(config)
                                )
     validation_set = get_dataset(config=config,
                                  split="val",
@@ -345,8 +345,8 @@ def main():
     # we use inverse_sqrt as parameters to get the invecerse rooted weights to give more weight to 
     # rare classes and they are normalized so that the max weight is 1.0 and the other are a fraction of it
     weights = [
-        training_set.get_class_weights(0, "normalized_inverse_sqrt").to(DEVICE),   
-        training_set.get_class_weights(1, "normalized_inverse_sqrt").to(DEVICE),        
+        training_set.get_class_weights(0, "normalized_inverse_sqrt").to(DEVICE),
+        training_set.get_class_weights(1, "normalized_inverse_sqrt").to(DEVICE),
         training_set.get_class_weights(2, "normalized_inverse_sqrt").to(DEVICE),
         ]
     
@@ -446,7 +446,9 @@ def main():
                 classes_features = F.normalize(model.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
                 task_text_features.append(classes_features)        
         text_features = torch.stack(task_text_features, dim=0)
-        torch.save(text_features, os.path.join(config.OUTPUT_DIR, "cktp/text_features.pt"))
+        torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
+        
+        text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
         print(f"Text features shape: {text_features.shape}")
 
 
@@ -566,9 +568,9 @@ def main():
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
 
                 if config.TUNING.lower() == 'softcpt':                
-                    torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bacc.pt"))
+                    torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bval.pt"))
                 else:
-                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bacc.pt"))
+                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bval.pt"))
 
             if sum(val_acc)/num_tasks > best_accuracy:
                 best_accuracy = sum(val_acc)/num_tasks
@@ -585,7 +587,7 @@ def main():
         if epochs_without_improvement >= patience:
             print("Early stopping triggered.")
             break
-        #scheduler.step()
+        scheduler.step()
         lr_history.append(optimizer.param_groups[0]['lr'])
 
         # Plot della variazione del learning rate
