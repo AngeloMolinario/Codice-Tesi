@@ -105,6 +105,29 @@ class Siglip2Model(SiglipPreTrainedModel):
             torch.save({'text_features': text_features.cpu()}, text_features_path)
             print(f"Text features salvate in {text_features_path} (shape: {text_features.shape})")
 
+    def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
+        """
+        Save vision-only checkpoint with full-model key format for Siglip2Model.
+        - Prefix keys with `vision_model.` to match full model state_dict format.
+        - Exclude VPT params (prompt_learner.*).
+        - Include `logit_scale` and (if present) `logit_bias`.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        visual_sd = self.vision_model.state_dict()
+        out_sd = {}
+        for k, v in visual_sd.items():
+            if k.startswith("prompt_learner"):
+                continue
+            out_sd[f"vision_model.{k}"] = v.detach().cpu()
+        # Add scale/bias
+        out_sd["logit_scale"] = self.logit_scale.detach().cpu()
+        if hasattr(self, "logit_bias") and isinstance(self.logit_bias, torch.nn.Parameter):
+            out_sd["logit_bias"] = self.logit_bias.detach().cpu()
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[Siglip2Model] Vision model saved (vision_model.* + logit_scale[/bias]) to {save_path}")
+
     def load_model(self, path, map_location, repo_id="google/siglip2-base-patch16-224", filename="model.safetensors"):
         # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
 
@@ -216,6 +239,28 @@ class Siglip2Vision(nn.Module):
 
         self._vpt = []
 
+    def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
+        """
+        Save vision-only checkpoint with full-model key format for Siglip2Vision.
+        - Prefix keys with `vision_model.` to match state_dict format.
+        - Exclude VPT params (prompt_learner.*).
+        - Include `logit_scale` and (if present) `logit_bias`.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        visual_sd = self.vision_model.state_dict()
+        out_sd = {}
+        for k, v in visual_sd.items():
+            if k.startswith("prompt_learner"):
+                continue
+            out_sd[f"vision_model.{k}"] = v.detach().cpu()
+        out_sd["logit_scale"] = self.logit_scale.detach().cpu()
+        if hasattr(self, "logit_bias") and isinstance(self.logit_bias, torch.nn.Parameter):
+            out_sd["logit_bias"] = self.logit_bias.detach().cpu()
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[Siglip2Vision] Vision model saved (vision_model.* + logit_scale[/bias]) to {save_path}")
+
     def get_image_features(self, image, normalize=True):
         vision_outputs = self.vision_model(
             pixel_values=image,
@@ -273,30 +318,62 @@ class Siglip2Vision(nn.Module):
             print(f"No VPT token found in {ckpt_path}")
 
     def load_baseline(self, path, map_location, repo_id="google/siglip2-base-patch16-224", filename="model.safetensors"):
-        # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
+        """
+        Load baseline weights for the vision backbone with broad compatibility:
+        - If `path` exists and points to a checkpoint saved via `save_vision_model`, it expects keys
+          prefixed with `vision_model.*` plus `logit_scale`/`logit_bias`.
+        - Otherwise falls back to downloading/converting from the Hub and loading `model.pth`.
+        """
+        # Prefer explicit local checkpoint if present
+        if path is not None and os.path.exists(path):
+            ckpt = torch.load(path, map_location=map_location)
+            # Unwrap nested dicts
+            if isinstance(ckpt, dict) and ("state_dict" in ckpt or "weights" in ckpt):
+                ckpt = ckpt.get("state_dict", ckpt.get("weights", ckpt))
+            # Strip optional module. prefix
+            ckpt = {k.replace("module.", ""): v for k, v in ckpt.items()}
 
-        # Check if the file exists
-        if not os.path.exists(path):
-            print("Model not found. Downloading it from the hub...")
-            # If not, download it from the hub
-            sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path))
-            # Convert the model to .pth format
-            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path))
-        # Load the model
-        state_dict = torch.load(os.path.join(os.path.dirname(path), "model.pth"), map_location=map_location)
-        result = self.load_state_dict(state_dict, strict=False)
-        
-        # Check for missing or mismatching keys during the loading of the state_dict
-        if result.missing_keys:
+            # Load logit params if present
+            if "logit_scale" in ckpt and hasattr(self, "logit_scale"):
+                try:
+                    self.logit_scale.data.copy_(ckpt["logit_scale"].to(map_location))
+                except Exception:
+                    pass
+            if "logit_bias" in ckpt and hasattr(self, "logit_bias"):
+                try:
+                    self.logit_bias.data.copy_(ckpt["logit_bias"].to(map_location))
+                except Exception:
+                    pass
+
+            # Extract only vision weights
+            if any(k.startswith("vision_model.") for k in ckpt):
+                vision_sd = {k.replace("vision_model.", ""): v for k, v in ckpt.items() if k.startswith("vision_model.")}
+            else:
+                # Assume it contains only vision weights
+                vision_sd = {k: v for k, v in ckpt.items() if not k.startswith("text_model.")}
+
+            # Exclude VPT if present
+            vision_sd = {k: v for k, v in vision_sd.items() if not k.startswith("prompt_learner")}
+
+            result = self.vision_model.load_state_dict(vision_sd, strict=False)
+        else:
+            # Fallback to Hub download/convert and load full state_dict
+            print("Model not found locally. Downloading from the hub...")
+            sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path) if path else None)
+            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path) if path else ".")
+            state_dict = torch.load(os.path.join(os.path.dirname(path) if path else ".", "model.pth"), map_location=map_location)
+            result = self.load_state_dict(state_dict, strict=False)
+
+        # Report loading status
+        if hasattr(result, 'missing_keys') and result.missing_keys:
             print("[WARNING] The loaded models miss the following keys, ensure to train it on a downstream task:")
             for k in result.missing_keys:
                 print(f"  {k}")
-        if result.unexpected_keys:
+        if hasattr(result, 'unexpected_keys') and result.unexpected_keys:
             print("[WARNING] The loaded models have unexpected keys:")
             for k in result.unexpected_keys:
                 print(f"  {k}")
 
-        
         print(f"LOGIT SCALE: {self.logit_scale} - exp {self.logit_scale.exp()}")
         print(f"LOGIT BIAS: {self.logit_bias}")
 

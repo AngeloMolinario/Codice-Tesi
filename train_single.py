@@ -226,7 +226,10 @@ def main():
     shutil.copy2(configuration_path, f'{config.OUTPUT_DIR}/training_configuration.json')
 
     # Get the model
-    model = get_model(config).to(DEVICE)    
+    model = get_model(config).to(DEVICE)
+
+    # Save the vision model right after loading
+    model.save_vision_model(config.OUTPUT_DIR, filename="vision_ckpt.pt")
 
     print(f"MODEL LOGIT SCALE {model.logit_scale}")
 
@@ -384,13 +387,23 @@ def main():
         if val_loss[0] < best_val_loss or val_acc[0] > best_accuracy:
             if val_loss[0] < best_val_loss:
                 best_val_loss = val_loss[0]
-                print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
-                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bestval.pt"))
+                print(f"New best validation loss: {best_val_loss:.4f}. Saving artifacts...")
+                if config.TUNING.lower() == 'softcpt':
+                    # Save current text features for best validation loss
+                    tf_path = os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bval.pt")
+                    torch.save(model.get_text_features(normalize=True), tf_path)
+                else:
+                    # Save VPT token for best validation loss
+                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
 
             if val_acc[0] > best_accuracy:
                 best_accuracy = val_acc[0]
-                print(f"New best validation accuracy: {best_accuracy:.4f}. Saving model...")
-                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bestacc.pt"))
+                print(f"New best validation accuracy: {best_accuracy:.4f}. Saving artifacts...")
+                if config.TUNING.lower() == 'softcpt':
+                    tf_path = os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bacc.pt")
+                    torch.save(model.get_text_features(normalize=True), tf_path)
+                else:
+                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bacc.pt"))
 
             epochs_without_improvement = 0            
         else:
@@ -414,6 +427,9 @@ def main():
         plt.grid(True)
         plt.savefig(os.path.join(config.OUTPUT_DIR, "learning_rate_plot.png"))
         plt.close()
+
+    # Save the full model at the end of training
+    torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, "full_training_model.pt"))
 
 
 if __name__ == "__main__":

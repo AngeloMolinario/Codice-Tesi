@@ -52,6 +52,28 @@ class PECore(nn.Module):
             self.get_text_features(text, normalize=True) if text is not None else None
         )
         return image_features, text_features, self.logit_scale.exp()
+
+    def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
+        """
+        Save vision-only checkpoint in the same key format used by full-model loaders.
+        - Keys are prefixed with `visual.` to match PE loaders.
+        - Excludes VPT params (`prompt_learner.*`).
+        - Also saves `logit_scale` and (if present) `logit_bias` at top level.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        visual_sd = self.visual.state_dict()
+        out_sd = {}
+        for k, v in visual_sd.items():
+            if k.startswith("prompt_learner"):
+                continue
+            out_sd[f"visual.{k}"] = v.detach().cpu()
+        # Add scaling params
+        out_sd["logit_scale"] = self.logit_scale.detach().cpu()
+        if hasattr(self, "logit_bias") and isinstance(self.logit_bias, torch.nn.Parameter):
+            out_sd["logit_bias"] = self.logit_bias.detach().cpu()
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[PECore] Vision model saved (visual.* + logit_scale[/bias]) to {save_path}")
     
     def load_logit_scale(self, ckpt_path: str):
         _sd = torch.load(ckpt_path, map_location='cpu')
@@ -136,6 +158,26 @@ class PECore_Vision(nn.Module):
         self.register_buffer('text_features', torch.empty(0))
         self.logit_scale = nn.Parameter(torch.ones([]))
 
+    def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
+        """
+        Save vision-only checkpoint with PE full-model key format.
+        - Prefix keys with `visual.`; exclude VPT params.
+        - Include `logit_scale` and `logit_bias` if present.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        visual_sd = self.visual.state_dict()
+        out_sd = {}
+        for k, v in visual_sd.items():
+            if k.startswith("prompt_learner"):
+                continue
+            out_sd[f"visual.{k}"] = v.detach().cpu()
+        out_sd["logit_scale"] = self.logit_scale.detach().cpu()
+        if hasattr(self, "logit_bias") and isinstance(self.logit_bias, torch.nn.Parameter):
+            out_sd["logit_bias"] = self.logit_bias.detach().cpu()
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[PECore_Vision] Vision model saved (visual.* + logit_scale[/bias]) to {save_path}")
+
 
     def get_image_features(self, x, normalize=True):
         features = self.visual(x)
@@ -189,31 +231,45 @@ class PECore_Vision(nn.Module):
 
     def load_baseline(self, ckpt_path, device):
         """
-        Carica il modello da un checkpoint e stampa le chiavi mancanti e non trovate.
-        Ignora le chiavi mancanti relative al text_model.
-    
+        Carica il vision encoder da un checkpoint.
+        Supporta sia i checkpoint originali PE che quelli salvati con `save_vision_model`.
+
         Args:
-            ckpt_path (str): Percorso del checkpoint.
+            ckpt_path (str): Percorso del checkpoint (può essere quello salvato con `save_vision_model`).
             device (torch.device): Dispositivo su cui caricare il modello.
         """
-        path = fetch_pe_checkpoint("PE-Core-B16-224")
+        # Scegli la sorgente: se esiste un file locale usa quello, altrimenti il checkpoint di default
+        path = ckpt_path if (ckpt_path is not None and os.path.exists(ckpt_path)) else fetch_pe_checkpoint("PE-Core-B16-224")
 
-        _sd = torch.load(path, weights_only=True)
-        if "state_dict" in _sd:
-            _sd = _sd["state_dict"]
-        elif "weights" in _sd:
-            _sd = _sd["weights"]
+        _sd = torch.load(path, map_location=device)
+        if isinstance(_sd, dict) and ("state_dict" in _sd or "weights" in _sd):
+            _sd = _sd.get("state_dict", _sd.get("weights", _sd))
 
+        # compatibilità con chiavi prefissate con 'module.'
         _sd = {k.replace("module.", ""): v for k, v in _sd.items()}
 
-        self.logit_scale.data.copy_(_sd["logit_scale"].to(device))
+        # carica logit_scale/logit_bias se presenti
+        if "logit_scale" in _sd:
+            self.logit_scale.data.copy_(_sd["logit_scale"].to(device))
+        if hasattr(self, "logit_bias") and "logit_bias" in _sd:
+            try:
+                self.logit_bias.data.copy_(_sd["logit_bias"].to(device))
+            except Exception:
+                pass
 
+        # Estrai solo i pesi del vision encoder; supporta formati con prefisso 'visual.' (save_vision_model)
         if any(k.startswith("visual.") for k in _sd):
-            _sd = {k.replace("visual.", ""): v for k, v in _sd.items() if "visual" in k}
+            visual_sd = {k.replace("visual.", ""): v for k, v in _sd.items() if k.startswith("visual.")}
+        else:
+            # se non c'è prefisso, assume che lo sd contenga solo i pesi del vision encoder
+            visual_sd = {k: v for k, v in _sd.items() if not k.startswith("text_model.")}
 
-        m, u = self.visual.load_state_dict(_sd, strict=False)
+        # Escludi eventuali pesi di VPT
+        visual_sd = {k: v for k, v in visual_sd.items() if not k.startswith("prompt_learner")}
 
-        if (m or u): 
+        m, u = self.visual.load_state_dict(visual_sd, strict=False)
+
+        if (m or u):
             print(f"Missing keys for loading vision encoder: {m}")
             print(f"Unexpected keys for loading vision encoder: {u}")
 

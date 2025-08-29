@@ -3,16 +3,13 @@
 # Script to run the test.py script with specific parameters
 
 # Define default values
-MODEL_TYPE="PECoreSoftCPT"
-DATASETS=("AffectNet" "FairFace" "UTKFace" "Raf-DB" "CelebA_HQ" "LSW")  # List of datasets
-DATASETS=("FairFace" "UTKFace")
-BATCH_SIZE=256
+MODEL_TYPE="Siglip2SoftCPT"
+DATASETS=("AffectNet" "FairFace" "UTKFace" "Raf-DB" "LSW")  # List of datasets
+BATCH_SIZE=32
 BASE_DATASET_PATH="../processed_datasets/datasets_with_standard_labels"
-BASE_OUTPUT_PATH="../TEST/Pali_age_PECore/SoftCPT/emd10_WSam_max_1_task_noAffectNet"
+BASE_OUTPUT_PATH="../TEST/Siglip2/SoftCPT/0001"
 NUM_PROMPT=0
-MODEL_CKPT_PATH=""
-VPT_CKPT_PATH=""
-TEXT_CKPT="../TRAIN/PECore/SoftCPT/emd10_WSam_max_1_task_noAffectNet/ckpt/text_features_bacc.pt"
+CKPT_DIR="../TRAIN/Siglip2/SoftCPT/0001/ckpt"
 USE_TQDM="" # set to "--no_tqdm" to disable
 PALIGEMMA="" # set to "--paligemma" to enable
 
@@ -36,13 +33,11 @@ for DATASET in "${DATASETS[@]}"; do
     --output_path \"${OUTPUT_PATH}\" \
     ${USE_TQDM} \
     --num_prompt ${NUM_PROMPT} \
-    --model_ckpt_path \"${MODEL_CKPT_PATH}\" \
-    --vpt_ckpt_path \"${VPT_CKPT_PATH}\" \
-    --text_ckpt \"${TEXT_CKPT}\" \
-    ${PALIGEMMA}\
+    --ckpt_dir \"${CKPT_DIR}\" \
+    ${PALIGEMMA}"
 
   # Print the command (for debugging)
-  echo "Running command for dataset '$DATASET': $COMMAND"
+  echo "Running command for dataset '$DATASET'"
 
   # Execute the command
   eval $COMMAND

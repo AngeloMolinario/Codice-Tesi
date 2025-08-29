@@ -296,7 +296,10 @@ def main():
     ##                               Load correct model                                        ##
     #############################################################################################
 
-    model = get_model(config).to(DEVICE)    
+    model = get_model(config).to(DEVICE)
+
+    # Save the vision model right after loading
+    model.save_vision_model(config.OUTPUT_DIR, filename="vision_ckpt.pt")
 
     #############################################################################################
     ##                         Dataset and Dataloade building                                  ##
@@ -491,7 +494,7 @@ def main():
                 w_i=1.0
             w.append((1.0 / max(w_i, 1e-8)))
         max_raw = sum(w)/len(w) #max(w)
-        task_weight = torch.tensor([min(r / max_raw, 1.0) for r in w], device=DEVICE)
+        task_weight = torch.tensor([r / max_raw for r in w], device=DEVICE)
 
 
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")
@@ -625,6 +628,9 @@ def main():
         plt.tight_layout()
         plt.savefig(os.path.join(config.OUTPUT_DIR, 'task_weights_per_epoch.png'))
         plt.close()
+
+    # Save the full model at the end of training
+    torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, "full_training_model.pt"))
 
 
 if __name__ == "__main__":

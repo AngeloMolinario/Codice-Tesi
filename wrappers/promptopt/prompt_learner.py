@@ -252,6 +252,39 @@ class CustomModel(nn.Module):
         """
         return list(self.prompt_learner.parameters()) + list(self.task_prompt_learner.parameters()) + list(self.prompt_gen.parameters())
 
+    def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
+        """
+        Save the underlying model's vision weights in the same format used by its full-model loader.
+        Prefer delegating to the wrapped model if it implements `save_vision_model`.
+        Otherwise, prefix keys according to underlying model type and include scale/bias.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Delegate if available
+        if hasattr(self.model, "save_vision_model") and callable(getattr(self.model, "save_vision_model")):
+            return self.model.save_vision_model(output_dir, filename)
+
+        # Fallback: infer prefix by attribute name
+        prefix = "visual." if hasattr(self.model, "visual") else ("vision_model." if hasattr(self.model, "vision_model") else "")
+
+        visual_sd = self.image_encoder.state_dict()
+        out_sd = {}
+        for k, v in visual_sd.items():
+            if k.startswith("prompt_learner"):
+                continue
+            out_sd[f"{prefix}{k}"] = v.detach().cpu() if hasattr(v, 'detach') else v
+
+        # Include scale/bias if present
+        if hasattr(self, "logit_scale"):
+            out_sd["logit_scale"] = (self.logit_scale.detach().cpu() if hasattr(self.logit_scale, 'detach') else self.logit_scale)
+        if hasattr(self, "logit_bias"):
+            out_sd["logit_bias"] = (self.logit_bias.detach().cpu() if hasattr(self.logit_bias, 'detach') else self.logit_bias)
+
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[CustomModel] Vision model saved ({prefix}* + logit_scale[/bias]) to {save_path}")
+
     def forward(self, image):
 
         prompts = self.task_prompt_learner()                                # Create the prompt for the task using the task prompt learner

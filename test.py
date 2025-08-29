@@ -173,116 +173,179 @@ def save_confusion_matrices_as_images(confusion_matrices, class_names_per_task, 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters())
 
-def load_model(model_type, num_prompt, ckpt_path, vpt_ckpt, device):
+def _discover_in_ckpt_dir(ckpt_dir: str):
+    """
+    From a single ckpt directory, discover useful artifacts:
+    - vision checkpoint (prefer vision_ckpt.pt in ckpt_dir, else parent dir)
+    - list of VPT token files (vpt_token*.pt) in ckpt_dir (sorted by name)
+    - text features file (text_features*.pt) in ckpt_dir (pick a sensible one)
+    """
+    ckpt_dir = os.path.abspath(ckpt_dir)
+    parent_dir = os.path.dirname(ckpt_dir)
+
+    # Vision checkpoint
+    vision_ckpt = None
+    candidates = [
+        os.path.join(ckpt_dir, "vision_ckpt.pt"),
+        os.path.join(parent_dir, "vision_ckpt.pt"),
+        os.path.join(parent_dir, "full_training_model.pt"),  # acceptable by our loaders
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            vision_ckpt = p
+            break
+
+    # VPT tokens inside ckpt dir (only best-accuracy)
+    vpt_tokens = []
+    if os.path.isdir(ckpt_dir):
+        for fn in sorted(os.listdir(ckpt_dir)):
+            if fn.startswith("vpt_token") and fn.endswith(".pt") and "bacc" in fn:
+                vpt_tokens.append(os.path.join(ckpt_dir, fn))
+
+    # Text features inside ckpt dir
+    text_feats = None
+    # Prefer only best-accuracy text features
+    bacc_path = os.path.join(ckpt_dir, "text_features_bacc.pt")
+    if os.path.isfile(bacc_path):
+        text_feats = bacc_path
+
+    return vision_ckpt, vpt_tokens, text_feats
+
+
+def _load_text_features_if_any(model, tokenizer, text_ckpt_path, device):
+    """Load text features if a checkpoint is provided; otherwise compute on-the-fly when possible."""
+    text_features = None
+    if text_ckpt_path is not None and os.path.isfile(text_ckpt_path):
+        try:
+            obj = torch.load(text_ckpt_path, map_location=device)
+            if isinstance(obj, dict) and "text_features" in obj:
+                text_features = obj["text_features"]
+            elif torch.is_tensor(obj):
+                text_features = obj
+            else:
+                print(f"Warning: unknown text feature format in '{text_ckpt_path}', computing on-the-fly.")
+        except Exception as e:
+            print(f"Warning: failed to load text features from '{text_ckpt_path}': {e}")
+
+    if text_features is None:
+        if hasattr(model, "text_model"):
+            print("Building text features on-the-fly...")
+            text_features = get_text_features(model.text_model, tokenizer, normalize=True).to(device)
+        else:
+            raise RuntimeError("No text features provided and model has no text_model to build them.")
+
+    return text_features
+
+
+def load_model(model_type, num_prompt, ckpt_dir, device):
+    # Discover artifacts from ckpt_dir
+    vision_ckpt, vpt_tokens, text_feats_path = _discover_in_ckpt_dir(ckpt_dir)
+    
     if model_type == 'PECoreBase':
         model = PECore_Vision(
             vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
             num_prompt=num_prompt
         )
-        model.load_baseline(ckpt_path, device)
-        return model, get_image_transform(224), PETokenizer(32)
+        model.load_baseline(vision_ckpt, device)
+        return model, get_image_transform(224), PETokenizer(32), text_feats_path
 
     elif model_type == 'Siglip2Base':
         model = Siglip2Vision(
             AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
             num_prompt=num_prompt
         )
-        model.load_baseline(ckpt_path, device)
+        model.load_baseline(vision_ckpt, device)
         image_transforms = T.Compose([
             T.Resize((224, 224)),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
-        return model, image_transforms, SigLip2Tokenizer(64)
+        return model, image_transforms, SigLip2Tokenizer(64), text_feats_path
 
     elif model_type == 'PECoreVPT':
         model = PECore_Vision(
             vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
             num_prompt=num_prompt
         )
-        model.load_baseline(ckpt_path, device)
-        model.load_VPT_token(vpt_ckpt, device)
-        return model, get_image_transform(224), PETokenizer(32)
+        model.load_baseline(vision_ckpt, device)
+        # Load first available VPT token, if present
+        if vpt_tokens:
+            try:
+                model.load_VPT_token(vpt_tokens[0], device)
+            except Exception as e:
+                print(f"Warning: failed to load VPT token '{vpt_tokens[0]}': {e}")
+        return model, get_image_transform(224), PETokenizer(32), text_feats_path
 
     elif model_type == 'PECoreSoftCPT':
         model = PECore_Vision(
             vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
             num_prompt=0
         )
-        if ckpt_path is None:
-            raise ValueError("For PECoreSoftCPT you must provide --model_ckpt_path.")
-        model.load_baseline(ckpt_path, device)
-        return model, get_image_transform(224), PETokenizer(32)
+        model.load_baseline(vision_ckpt, device)
+        return model, get_image_transform(224), PETokenizer(32), text_feats_path
 
     elif model_type == 'PECoreVPT_single':
         model = PECore_Vision(
             vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
             num_prompt=num_prompt
         )
-        if ckpt_path is None or vpt_ckpt is None:
-            raise ValueError("For PECoreVPT_single you must provide --model_ckpt_path and --vpt_ckpt_path (3 paths).")
-        if isinstance(vpt_ckpt, str):
-            vpt_ckpt = [p.strip() for p in vpt_ckpt.split(',')]
-        if len(vpt_ckpt) != 3:
-            raise ValueError("Expected 3 VPT checkpoint paths for *_single variants.")
-        model.load_baseline(ckpt_path, device)
-        model.load_VPT_token(vpt_ckpt[0], device)
-        model.load_VPT_token(vpt_ckpt[1], device)
-        model.load_VPT_token(vpt_ckpt[2], device)
-        return model, get_image_transform(224), PETokenizer(32)
+        model.load_baseline(vision_ckpt, device)
+        # Load up to 3 tokens if available
+        for idx, tok in enumerate(vpt_tokens[:3]):
+            try:
+                model.load_VPT_token(tok, device)
+            except Exception as e:
+                print(f"Warning: failed to load VPT token '{tok}': {e}")
+        return model, get_image_transform(224), PETokenizer(32), text_feats_path
 
     elif model_type == 'Siglip2VPT':
         model = Siglip2Vision(
             AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
             num_prompt=num_prompt
         )
-        if ckpt_path is None or vpt_ckpt is None:
-            raise ValueError("For Siglip2VPT you must provide --model_ckpt_path and --vpt_ckpt_path.")
-        model.load_baseline(ckpt_path, device)
-        model.load_VPT_token(vpt_ckpt, device)
+        model.load_baseline(vision_ckpt, device)
+        if vpt_tokens:
+            try:
+                model.load_VPT_token(vpt_tokens[0], device)
+            except Exception as e:
+                print(f"Warning: failed to load VPT token '{vpt_tokens[0]}': {e}")
         image_transforms = T.Compose([
             T.Resize((224, 224)),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
-        return model, image_transforms, SigLip2Tokenizer(64)
+        return model, image_transforms, SigLip2Tokenizer(64), text_feats_path
 
     elif model_type == 'Siglip2VPT_single':
         model = Siglip2Vision(
             AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
             num_prompt=num_prompt
         )
-        if ckpt_path is None or vpt_ckpt is None:
-            raise ValueError("For Siglip2VPT_single you must provide --model_ckpt_path and --vpt_ckpt_path (3 paths).")
-        if isinstance(vpt_ckpt, str):
-            vpt_ckpt = [p.strip() for p in vpt_ckpt.split(',')]
-        if len(vpt_ckpt) != 3:
-            raise ValueError("Expected 3 VPT checkpoint paths for *_single variants.")
-        model.load_baseline(ckpt_path, device)
-        model.load_VPT_token(vpt_ckpt[0], device)
-        model.load_VPT_token(vpt_ckpt[1], device)
-        model.load_VPT_token(vpt_ckpt[2], device)
+        model.load_baseline(vision_ckpt, device)
+        for tok in vpt_tokens[:3]:
+            try:
+                model.load_VPT_token(tok, device)
+            except Exception as e:
+                print(f"Warning: failed to load VPT token '{tok}': {e}")
         image_transforms = T.Compose([
             T.Resize((224, 224)),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
-        return model, image_transforms, SigLip2Tokenizer(64)
+        return model, image_transforms, SigLip2Tokenizer(64), text_feats_path
 
     elif model_type == 'Siglip2SoftCPT':
         model = Siglip2Vision(
             AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
             num_prompt=0
         )
-        if ckpt_path is None:
-            raise ValueError("For Siglip2SoftCPT you must provide --model_ckpt_path.")
-        model.load_baseline(ckpt_path, device)
+        model.load_baseline(vision_ckpt, device)
         image_transforms = T.Compose([
             T.Resize((224, 224)),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
-        return model, image_transforms, SigLip2Tokenizer(64)
+        return model, image_transforms, SigLip2Tokenizer(64), text_feats_path
 
     else:
         raise NotImplementedError(f"Model type {model_type} not implemented.")
@@ -694,38 +757,20 @@ def ValidatePaliGemma(model, dataloader, device, use_tqdm, age5_classes=None):
         age_per_class_metrics,
     )
 
-def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt, model_ckpt_path, vpt_ckpt_path, text_ckpt, paligemma):
+def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt, ckpt_dir, paligemma):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(output_path, exist_ok=True)
 
-    # Supporta "x,y,z" per *_single
-    vpt_arg = vpt_ckpt_path
-    if isinstance(vpt_arg, str) and ('_single' in model_type):
-        vpt_arg = [p.strip() for p in vpt_arg.split(',')]
-
-    model, image_processor, tokenizer = load_model(
+    model, image_processor, tokenizer, text_feats_path = load_model(
         model_type=model_type,
         num_prompt=num_prompt,
-        ckpt_path=model_ckpt_path,
-        vpt_ckpt=vpt_arg,
+        ckpt_dir=ckpt_dir,
         device=device
     )
     model.to(device)
 
-    # Carica o ricostruisce le text-features
-    text_features = None
-    try:
-        if text_ckpt is not None and os.path.isfile(text_ckpt):
-            text_features = torch.load(text_ckpt, map_location=device)
-    except Exception as e:
-        print(f"Warning: failed to load text features from '{text_ckpt}': {e}")
-
-    if text_features is None:
-        if hasattr(model, "text_model"):
-            print("Building text features on-the-fly...")
-            text_features = get_text_features(model.text_model, tokenizer, normalize=True).to(device)
-        else:
-            raise RuntimeError("No text features provided and model has no text_model to build them.")
+    # Carica o ricostruisce le text-features (dalla cartella ckpt)
+    text_features = _load_text_features_if_any(model, tokenizer, text_feats_path, device)
 
     # Se il modello usa internamente le text features, allegale
     if hasattr(model, "text_features"):
@@ -790,10 +835,7 @@ def argparse_args():
     parser.add_argument('--output_path', type=str, default='output', help='Path to save outputs like confusion matrices.')
     parser.add_argument('--no_tqdm', action='store_true', help='Disable tqdm progress bar.')
     parser.add_argument('--num_prompt', type=int, default=0, help='Number of prompt tokens to use (only for VPT models).')
-    parser.add_argument('--model_ckpt_path', type=str, default=None, help='Path to the model checkpoint (only for VPT and SoftCPT models).')
-    parser.add_argument('--vpt_ckpt_path', type=str, default=None,
-                        help='Path to the VPT checkpoint (only for VPT models). For *_single, pass 3 paths separated by commas.')
-    parser.add_argument('--text_ckpt', type=str, default='./text_features.pt', help='Path to the precomputed text features checkpoint.')
+    parser.add_argument('--ckpt_dir', type=str, required=True, help='Path to the ckpt directory containing saved artifacts.')
     parser.add_argument("--paligemma", action='store_true', help='Test using paligemma class')
     return parser.parse_args()
 
@@ -806,8 +848,6 @@ if __name__ == "__main__":
         output_path=args.output_path,
         use_tqdm=not args.no_tqdm,
         num_prompt=args.num_prompt,
-        model_ckpt_path=args.model_ckpt_path,
-        vpt_ckpt_path=args.vpt_ckpt_path,
-        text_ckpt=args.text_ckpt,
+        ckpt_dir=args.ckpt_dir,
         paligemma=args.paligemma
     )
