@@ -368,11 +368,13 @@ class Siglip2Vision(nn.Module):
         if hasattr(result, 'missing_keys') and result.missing_keys:
             print("[WARNING] The loaded models miss the following keys, ensure to train it on a downstream task:")
             for k in result.missing_keys:
-                print(f"  {k}")
+                if not k.startswith("text_model"):
+                    print(f"  {k}")
         if hasattr(result, 'unexpected_keys') and result.unexpected_keys:
             print("[WARNING] The loaded models have unexpected keys:")
             for k in result.unexpected_keys:
-                print(f"  {k}")
+                if not k.startswith("text_model"):
+                    print(f"  {k}") 
 
         print(f"LOGIT SCALE: {self.logit_scale} - exp {self.logit_scale.exp()}")
         print(f"LOGIT BIAS: {self.logit_bias}")
