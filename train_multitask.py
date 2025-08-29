@@ -340,15 +340,15 @@ def main():
         ]
     
     weight = [
-        torch.ones(9),
-        torch.ones(2),
-        torch.ones(7)
+        torch.ones(9).to(DEVICE),
+        torch.ones(2).to(DEVICE),
+        torch.ones(7).to(DEVICE)
     ]
 
     loss_fn = get_loss_fn(config, weights=weight)
 
     # Replace shuffling with WeightedRandomSampler to mitigate class imbalance across tasks
-    sampler, _sample_weights = build_weighted_sampler(training_set, weights, combine="mean")
+    sampler, _sample_weights = build_weighted_sampler(training_set, weights, device=DEVICE, combine="mean")
     train_loader = DataLoader(
         dataset=training_set,
         batch_size=config.BATCH_SIZE,
@@ -361,6 +361,10 @@ def main():
         drop_last=True,
         prefetch_factor=config.PREFETCH_FACTOR
     )
+
+    print("#"*50)
+    print(f"## Sampler weights {_sample_weights}")
+    print("#"*50)
 
     #############################################################################################
     ##                        Optimizer creation and configuration                             ##

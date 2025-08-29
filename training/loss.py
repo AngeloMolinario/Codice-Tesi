@@ -215,11 +215,6 @@ class OrdinalAgeLossEMD(nn.Module):
 class CrossEntropyLoss():
     def __init__(self, num_classes, weights=None):
         self.ce = nn.CrossEntropyLoss(weight=weights)        
-        self.softmax = nn.Softmax(dim=1)
-        if weights is not None:
-            self.class_weights = weights
-        else:
-            self.class_weights = torch.ones(num_classes).to('cuda')
         self.factor = math.log(num_classes)
 
     def __call__(self, logit, true_labels):
@@ -235,7 +230,6 @@ class MaskedLoss():
 
     def __call__(self, logit, true_labels):                
         valid_mask = true_labels != self.ignore_index
-        
         if not valid_mask.any():
             loss = torch.tensor(0.0, device=logit.device, requires_grad=True)
 

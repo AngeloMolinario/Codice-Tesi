@@ -61,7 +61,7 @@ def _gather_labels_fast(dataset):
     return ages, genders, emotions
 
 
-def build_weighted_sampler(dataset, class_weights_per_task, combine="mean", min_weight: float = 1e-4):
+def build_weighted_sampler(dataset, class_weights_per_task, device, combine="mean", min_weight: float = 1e-4):
     """
     Build a WeightedRandomSampler for a (possibly multi-task) dataset.
 
@@ -107,7 +107,7 @@ def build_weighted_sampler(dataset, class_weights_per_task, combine="mean", min_
     # Normalize weights to have mean ~ 1.0 (keeps sampler numerically stable)
     mean_w = weights.mean().clamp_min(1e-8)
     weights = weights / mean_w
-
+    weights = weights.to(device)
     sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
     return sampler, weights
 

@@ -160,15 +160,13 @@
     },    
     "EMD_WEIGHT" : 1.0,
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
-    "BALANCE_TASK" : {"0" : 0.33,
-                     "1" : 0.33,
-                     "2" : 0.34},
+    "BALANCE_TASK" : {},
     "BATCH_SIZE" : 256,
-    "NUM_WORKERS" : 3,
+    "NUM_WORKERS" : 6,
     "LR" : 3e-3,
-    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/emd10",
+    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/emd10_weighted_sampler",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
-    "USE_TQDM": false,
-    "EPOCHS" : 20
+    "USE_TQDM": true,
+    "EPOCHS" : 5
 }
