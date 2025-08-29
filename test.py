@@ -33,7 +33,7 @@ CLASSES = [
     ["surprise", "fear", "disgust", "happy", "sad", "angry", "neutral"]
 ]
 
-def print_accuracy_table(top1_acc, top2_acc):
+def print_accuracy_table(top1_acc, top2_acc, onebin_acc, outputdir=None):
     """
     Stampa una tabella con l'accuracy per task (@1 e @2) e l'accuracy media sui 3 task.
     """
@@ -42,12 +42,18 @@ def print_accuracy_table(top1_acc, top2_acc):
     tasks = ['age', "gender", "emotion"]
 
     table_data = [
-        [f"Task {tasks[i]}", f"{top1_acc[i]:.4f}", f"{top2_acc[i]:.4f}"] for i in range(len(top1_acc))
+        [f"Task {tasks[i]}", f"{top1_acc[i]:.4f}", f"{top2_acc[i]:.4f}", f"{onebin_acc[i]:.4f}" if i == 0 else "N/A"] for i in range(len(top1_acc))
     ]
-    table_data.append(["Media", f"{avg_top1:.4f}", f"{avg_top2:.4f}"])
+    table_data.append(["Media", f"{avg_top1:.4f}", f"{avg_top2:.4f}", "N/A"])
 
-    headers = ["Task", "Top-1 Accuracy", "Top-2 Accuracy"]
+    headers = ["Task", "Top-1 Accuracy", "Top-2 Accuracy", "1-Bin Accuracy (Age)"]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+    if outputdir is not None:
+        with open(os.path.join(outputdir, "accuracy.txt"), 'w') as f:
+            f.write(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+    
 
 def plot_error_distribution(all_true_labels, pred_labels, class_names, output_dir):
     """
@@ -92,14 +98,14 @@ def plot_error_distribution(all_true_labels, pred_labels, class_names, output_di
         colors = []
 
         # Inserisci "Corretto" nella posizione corretta
-        labels.insert(target_class, "Corretto")
+        labels.insert(target_class, f"{class_names[target_class]}")
         values.insert(target_class, correct_count)
         colors.insert(target_class, "green")
 
         # Inserisci gli errori nelle posizioni corrette
         for i in range(num_classes):
             if i != target_class:
-                labels.insert(i, f"Errore verso {class_names[i]}")
+                labels.insert(i, f"{class_names[i]}")
                 values.insert(i, error_counts[i])
                 colors.insert(i, "red")
 
@@ -153,7 +159,7 @@ def save_confusion_matrices_as_images(confusion_matrices, class_names_per_task, 
             continue
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names_per_task[task_idx])
         fig, ax = plt.subplots(figsize=(8, 6))
-        disp.plot(ax=ax, cmap='Blues', xticks_rotation=45)
+        disp.plot(ax=ax, cmap='viridis', xticks_rotation=45)
         title_map = ["Age", "Gender", "Emotion"]
         plt.title(f"Confusion Matrix - {title_map[task_idx]}")
         plt.xlabel("Predicted Labels")
@@ -448,6 +454,7 @@ def validate(model, dataloader, device, use_tqdm):
     model.eval()
     total_correct_top1 = [0, 0, 0]
     total_correct_top2 = [0, 0, 0]
+    total_correct_1bin = [0, 0, 0]  # Nuova metrica
     total_samples = [0, 0, 0]
 
     all_true_labels = [[] for _ in range(3)]
@@ -476,14 +483,218 @@ def validate(model, dataloader, device, use_tqdm):
                 all_true_labels[task_idx].extend(valid_task_labels.cpu().tolist())
                 all_pred_labels[task_idx].extend(valid_top2_preds[:, 0].cpu().tolist())
 
+                # Calcolo 1-bin accuracy per il task "age"
+                if task_idx == 0:
+                    for j, true_label in enumerate(valid_task_labels):
+                        pred_label = valid_top2_preds[j, 0]
+                        if abs(pred_label - true_label) <= 1:
+                            total_correct_1bin[task_idx] += 1
+
             if not use_tqdm and i % 30 == 0:
                 print(f"{i}/{len(dataloader)} batches processed", end='\r')
 
     top1_accuracy = [total_correct_top1[i] / max(1, total_samples[i]) for i in range(3)]
     top2_accuracy = [total_correct_top2[i] / max(1, total_samples[i]) for i in range(3)]
-    return top1_accuracy, top2_accuracy, all_true_labels, all_pred_labels
+    onebin_accuracy = [0.0] * 3  # Inizializza con zeri
+    onebin_accuracy[0] = total_correct_1bin[0] / max(1, total_samples[0])  # Calcola solo per age
+    return top1_accuracy, top2_accuracy, onebin_accuracy, all_true_labels, all_pred_labels
 
-def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt, model_ckpt_path, vpt_ckpt_path, text_ckpt):
+
+def ValidatePaliGemma(model, dataloader, device, use_tqdm, age5_classes=None):
+    """
+    Computes validation metrics with age mapped from 9 bins
+    ["0-2","3-9","10-19","20-29","30-39","40-49","50-59","60-69","70+"]
+    into 5 bins ["0-9","10-19","20-39","40-59","60+"] and evaluates on the 5-bin space.
+
+    Returns:
+      - top1_accuracy: list[float] len=3 (per task)
+      - top2_accuracy: list[float] len=3 (per task)
+      - onebin_accuracy: list[float] len=3 (per task; only age is computed)
+      - all_true_labels: list[list[int]] len=3 (age mapped to 5-bin indices)
+      - all_pred_labels: list[list[int]] len=3 (top-1 preds; age in 5-bin indices)
+      - age_per_class_metrics: {
+            'classes': list[str] (5),
+            'top1_accuracy': list[float] (5),
+            'top2_accuracy': list[float] (5),
+            'onebin_accuracy': list[float] (5)
+        }
+    """
+    import torch
+    from tqdm import tqdm
+
+    if age5_classes is None:
+        age5_classes = ["0-9", "10-19", "20-39", "40-59", "60+"]
+    n_age5 = len(age5_classes)
+
+    # Mapping: 9->5 (index-based)
+    # 0:"0-2", 1:"3-9"           -> 0:"0-9"
+    # 2:"10-19"                  -> 1:"10-19"
+    # 3:"20-29", 4:"30-39"       -> 2:"20-39"
+    # 5:"40-49", 6:"50-59"       -> 3:"40-59"
+    # 7:"60-69", 8:"70+"         -> 4:"60+"
+    age9_to_age5 = [0, 0, 1, 2, 2, 3, 3, 4, 4]
+    age9_groups = [
+        [0, 1],  # -> 0 "0-9"
+        [2],     # -> 1 "10-19"
+        [3, 4],  # -> 2 "20-39"
+        [5, 6],  # -> 3 "40-59"
+        [7, 8],  # -> 4 "60+"
+    ]
+
+    def safe_div(num, den):
+        return float(num) / float(den) if den > 0 else 0.0
+
+    model.eval()
+    total_correct_top1 = [0, 0, 0]
+    total_correct_top2 = [0, 0, 0]
+    total_correct_1bin = [0, 0, 0]  # only meaningful for age
+    total_samples = [0, 0, 0]
+
+    # Per-class age counters in 5-bin space
+    age_total_per_class = [0] * n_age5
+    age_correct_top1_per_class = [0] * n_age5
+    age_correct_top2_per_class = [0] * n_age5
+    age_correct_1bin_per_class = [0] * n_age5
+
+    all_true_labels = [[] for _ in range(3)]
+    all_pred_labels = [[] for _ in range(3)]
+
+    iterator = tqdm(dataloader) if use_tqdm else dataloader
+    with torch.no_grad():
+        for i, (images, labels) in enumerate(iterator):
+            images = images.to(device)
+            labels = labels.to(device)
+
+            logits = model.forward(images)  # list/tuple of 3 tensors [B, C_task]
+
+            for task_idx, task_logits in enumerate(logits):
+                task_labels = labels[:, task_idx]
+                valid_indices = task_labels != -1
+                if valid_indices.sum().item() == 0:
+                    continue
+
+                valid_task_labels = task_labels[valid_indices]
+
+                if task_idx == 0:
+                    # Age task: handle 9->5 mapping if needed
+                    C_age = task_logits.size(1)
+                    if C_age == 9:
+                        # Aggregate logits into 5 bins using log-sum-exp
+                        grouped_logits = []
+                        for grp in age9_groups:
+                            grouped_logits.append(torch.logsumexp(task_logits[:, grp], dim=1))
+                        age5_logits = torch.stack(grouped_logits, dim=1)  # [B, 5]
+
+                        valid_age5_logits = age5_logits[valid_indices]  # [b_valid, 5]
+                        top2_preds = valid_age5_logits.topk(2, dim=-1).indices  # 5-bin indices
+
+                        # Map true labels (9->5)
+                        map_tensor = torch.tensor(age9_to_age5, device=valid_task_labels.device, dtype=torch.long)
+                        mapped_true = map_tensor[valid_task_labels]  # [b_valid], values in 0..4
+
+                        # Metrics in 5-bin space
+                        total_correct_top1[task_idx] += (top2_preds[:, 0] == mapped_true).sum().item()
+                        total_correct_top2[task_idx] += (
+                            (top2_preds == mapped_true.unsqueeze(1)).sum(dim=-1) > 0
+                        ).sum().item()
+                        total_samples[task_idx] += mapped_true.size(0)
+
+                        # 1-bin overall (within ±1 bin on top-1)
+                        total_correct_1bin[task_idx] += (torch.abs(top2_preds[:, 0] - mapped_true) <= 1).sum().item()
+
+                        # Track labels/preds (mapped)
+                        all_true_labels[task_idx].extend(mapped_true.detach().cpu().tolist())
+                        all_pred_labels[task_idx].extend(top2_preds[:, 0].detach().cpu().tolist())
+
+                        # Per-class accumulators
+                        mt_cpu = mapped_true.detach().cpu()
+                        tp_cpu = top2_preds.detach().cpu()
+                        for j in range(mt_cpu.size(0)):
+                            t = int(mt_cpu[j].item())
+                            age_total_per_class[t] += 1
+                            p1 = int(tp_cpu[j, 0].item())
+                            p2 = int(tp_cpu[j, 1].item())
+                            if p1 == t:
+                                age_correct_top1_per_class[t] += 1
+                            if p1 == t or p2 == t:
+                                age_correct_top2_per_class[t] += 1
+                            if abs(p1 - t) <= 1:
+                                age_correct_1bin_per_class[t] += 1
+
+                    elif C_age == n_age5:
+                        # Already 5-bin model; compute directly
+                        valid_logits = task_logits[valid_indices]
+                        top2_preds = valid_logits.topk(2, dim=-1).indices
+                        mapped_true = valid_task_labels  # already 0..4
+
+                        total_correct_top1[task_idx] += (top2_preds[:, 0] == mapped_true).sum().item()
+                        total_correct_top2[task_idx] += (
+                            (top2_preds == mapped_true.unsqueeze(1)).sum(dim=-1) > 0
+                        ).sum().item()
+                        total_samples[task_idx] += mapped_true.size(0)
+                        total_correct_1bin[task_idx] += (torch.abs(top2_preds[:, 0] - mapped_true) <= 1).sum().item()
+
+                        all_true_labels[task_idx].extend(mapped_true.detach().cpu().tolist())
+                        all_pred_labels[task_idx].extend(top2_preds[:, 0].detach().cpu().tolist())
+
+                        mt_cpu = mapped_true.detach().cpu()
+                        tp_cpu = top2_preds.detach().cpu()
+                        for j in range(mt_cpu.size(0)):
+                            t = int(mt_cpu[j].item())
+                            age_total_per_class[t] += 1
+                            p1 = int(tp_cpu[j, 0].item())
+                            p2 = int(tp_cpu[j, 1].item())
+                            if p1 == t:
+                                age_correct_top1_per_class[t] += 1
+                            if p1 == t or p2 == t:
+                                age_correct_top2_per_class[t] += 1
+                            if abs(p1 - t) <= 1:
+                                age_correct_1bin_per_class[t] += 1
+                    else:
+                        raise ValueError(f"Unexpected number of age classes: {C_age}. Expected 9 or {n_age5}.")
+                else:
+                    # Other tasks unchanged
+                    valid_logits = task_logits[valid_indices]
+                    top2_preds = valid_logits.topk(2, dim=-1).indices
+
+                    total_correct_top1[task_idx] += (top2_preds[:, 0] == valid_task_labels).sum().item()
+                    total_correct_top2[task_idx] += (
+                        (top2_preds == valid_task_labels.unsqueeze(1)).sum(dim=-1) > 0
+                    ).sum().item()
+                    total_samples[task_idx] += valid_task_labels.size(0)
+
+                    all_true_labels[task_idx].extend(valid_task_labels.detach().cpu().tolist())
+                    all_pred_labels[task_idx].extend(top2_preds[:, 0].detach().cpu().tolist())
+
+            if not use_tqdm and i % 30 == 0:
+                print(f"{i}/{len(dataloader)} batches processed", end='\r')
+
+    top1_accuracy = [total_correct_top1[i] / max(1, total_samples[i]) for i in range(3)]
+    top2_accuracy = [total_correct_top2[i] / max(1, total_samples[i]) for i in range(3)]
+    onebin_accuracy = [0.0, 0.0, 0.0]
+    onebin_accuracy[0] = total_correct_1bin[0] / max(1, total_samples[0])
+
+    age_top1_acc_per_class = [safe_div(c, t) for c, t in zip(age_correct_top1_per_class, age_total_per_class)]
+    age_top2_acc_per_class = [safe_div(c, t) for c, t in zip(age_correct_top2_per_class, age_total_per_class)]
+    age_onebin_acc_per_class = [safe_div(c, t) for c, t in zip(age_correct_1bin_per_class, age_total_per_class)]
+
+    age_per_class_metrics = {
+        'classes': list(age5_classes),
+        'top1_accuracy': age_top1_acc_per_class,
+        'top2_accuracy': age_top2_acc_per_class,
+        'onebin_accuracy': age_onebin_acc_per_class,
+    }
+
+    return (
+        top1_accuracy,
+        top2_accuracy,
+        onebin_accuracy,
+        all_true_labels,
+        all_pred_labels,
+        age_per_class_metrics,
+    )
+
+def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt, model_ckpt_path, vpt_ckpt_path, text_ckpt, paligemma):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(output_path, exist_ok=True)
 
@@ -535,10 +746,13 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
         shuffle=False,
         num_workers=min(4, os.cpu_count() or 0)
     )
+    if not paligemma:
+        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels = validate(model, dataloader, device, use_tqdm)
+    else:
+        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, cls = ValidatePaliGemma(model, dataloader, device, use_tqdm)
+        CLASSES[0] = cls["classes"]
 
-    top1_acc, top2_acc, all_true_labels, all_pred_labels = validate(model, dataloader, device, use_tqdm)
-
-    print_accuracy_table(top1_acc, top2_acc)
+    print_accuracy_table(top1_acc, top2_acc, onebin_acc, output_path)
 
     # Confusion matrices (stampa + salvataggio immagini)
     confusion_mats = []
@@ -580,6 +794,7 @@ def argparse_args():
     parser.add_argument('--vpt_ckpt_path', type=str, default=None,
                         help='Path to the VPT checkpoint (only for VPT models). For *_single, pass 3 paths separated by commas.')
     parser.add_argument('--text_ckpt', type=str, default='./text_features.pt', help='Path to the precomputed text features checkpoint.')
+    parser.add_argument("--paligemma", action='store_true', help='Test using paligemma class')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -593,5 +808,6 @@ if __name__ == "__main__":
         num_prompt=args.num_prompt,
         model_ckpt_path=args.model_ckpt_path,
         vpt_ckpt_path=args.vpt_ckpt_path,
-        text_ckpt=args.text_ckpt
+        text_ckpt=args.text_ckpt,
+        paligemma=args.paligemma
     )
