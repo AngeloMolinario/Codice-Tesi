@@ -31,7 +31,7 @@ from tqdm import tqdm
 from training.training_functions import *
 
 
-def get_loss_fn(config, weights=None):    
+def get_loss_fn(config, weights=[None, None, None]):    
     '''
         Get a list of loss functions with the following position:
         0. Age loss
@@ -312,17 +312,6 @@ def main():
                                  transform=get_image_transform(config)
                                 )
 
-    train_loader = DataLoader(
-        dataset=training_set,
-        batch_size=config.BATCH_SIZE,
-        shuffle=True,
-        num_workers=config.NUM_WORKERS,
-        pin_memory=True,
-        pin_memory_device="cuda",
-        persistent_workers=True,
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
-    )
 
     val_loader = DataLoader(
         dataset=validation_set,
@@ -350,7 +339,28 @@ def main():
         training_set.get_class_weights(2, "normalized_inverse_sqrt").to(DEVICE),
         ]
     
-    loss_fn = get_loss_fn(config, weights=weights)
+    weight = [
+        torch.ones(9),
+        torch.ones(2),
+        torch.ones(7)
+    ]
+
+    loss_fn = get_loss_fn(config, weights=weight)
+
+    # Replace shuffling with WeightedRandomSampler to mitigate class imbalance across tasks
+    sampler, _sample_weights = build_weighted_sampler(training_set, weights, combine="mean")
+    train_loader = DataLoader(
+        dataset=training_set,
+        batch_size=config.BATCH_SIZE,
+        sampler=sampler,
+        shuffle=False,
+        num_workers=config.NUM_WORKERS,
+        pin_memory=True,
+        pin_memory_device="cuda",
+        persistent_workers=True,
+        drop_last=True,
+        prefetch_factor=config.PREFETCH_FACTOR
+    )
 
     #############################################################################################
     ##                        Optimizer creation and configuration                             ##
@@ -475,7 +485,7 @@ def main():
             w_i = running_mean.get_by_index(i)
             if w_i is None:
                 w_i=1.0
-            w.append((1.0 / max(w_i, 1e-8))* data_task_weight[i])
+            w.append((1.0 / max(w_i, 1e-8)))
         max_raw = max(w)
         task_weight = torch.tensor([r / max_raw for r in w], device=DEVICE)
 

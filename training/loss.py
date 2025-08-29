@@ -206,9 +206,7 @@ class OrdinalAgeLossEMD(nn.Module):
 
         # Termine di regolarizzazione Eq.16
         reg = self._emd_regularizer_eq16(probs, targets)
-
-        # NOTA: nel paper non normalizzano per (C-1) o (C-1)^2 nell'Eq.16.
-        # Se vuoi mantenere la scala simile alla tua loss precedente, puoi agire su lambda_ordinal.
+        
         total = ce + self.lambda_ordinal * reg
         return total
 

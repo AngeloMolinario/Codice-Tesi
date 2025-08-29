@@ -15,6 +15,101 @@ from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from torch.utils.data import WeightedRandomSampler
+
+
+def _gather_labels_fast(dataset):
+    """
+    Return three lists (age, gender, emotion) of length len(dataset) without loading images.
+    Supports BaseDataset, MultiDataset, and TaskBalanceDataset.
+    """
+    ages, genders, emotions = [], [], []
+
+    if isinstance(dataset, BaseDataset):
+        # Direct arrays available
+        ages = list(dataset.age_groups)
+        genders = list(dataset.genders)
+        emotions = list(dataset.emotions)
+        return ages, genders, emotions
+
+    if isinstance(dataset, MultiDataset):
+        # Concatenate labels from each sub-dataset in order
+        for ds in dataset.datasets:
+            ages.extend(ds.age_groups)
+            genders.extend(ds.genders)
+            emotions.extend(ds.emotions)
+        return ages, genders, emotions
+
+    if isinstance(dataset, TaskBalanceDataset):
+        # Use index_map to respect any duplication/shuffling performed at construction
+        for ds_idx, local_idx, _ in dataset.index_map:
+            ds = dataset.datasets[ds_idx]
+            ages.append(ds.age_groups[local_idx])
+            genders.append(ds.genders[local_idx])
+            emotions.append(ds.emotions[local_idx])
+        return ages, genders, emotions
+
+    # Fallback (slower): access dataset[i][1] which returns labels, may load images
+    for i in range(len(dataset)):
+        try:
+            _, lbl = dataset[i]
+            ages.append(int(lbl[0]))
+            genders.append(int(lbl[1]))
+            emotions.append(int(lbl[2]))
+        except Exception:
+            ages.append(-1); genders.append(-1); emotions.append(-1)
+    return ages, genders, emotions
+
+
+def build_weighted_sampler(dataset, class_weights_per_task, combine="mean", min_weight: float = 1e-4):
+    """
+    Build a WeightedRandomSampler for a (possibly multi-task) dataset.
+
+    Args:
+        dataset: BaseDataset | MultiDataset | TaskBalanceDataset
+        class_weights_per_task: list/tuple of Tensors [age_w, gender_w, emotion_w]
+            Each tensor maps class index -> weight. Indices with no samples may be missing.
+        combine: how to merge task weights per sample: 'mean' | 'sum' | 'max'
+        min_weight: lower bound applied if a sample has no valid labels
+
+    Returns:
+        sampler, weights_tensor
+    """
+    assert isinstance(class_weights_per_task, (list, tuple)) and len(class_weights_per_task) >= 3, \
+        "class_weights_per_task must be a list of 3 tensors [age, gender, emotion]"
+
+    age_w, gender_w, emotion_w = class_weights_per_task[:3]
+
+    ages, genders, emotions = _gather_labels_fast(dataset)
+    n = len(ages)
+
+    weights = torch.zeros(n, dtype=torch.float32)
+    for i in range(n):
+        w_parts = []
+        a, g, e = ages[i], genders[i], emotions[i]
+        if a != -1 and int(a) < len(age_w):
+            w_parts.append(age_w[int(a)].item())
+        if g != -1 and int(g) < len(gender_w):
+            w_parts.append(gender_w[int(g)].item())
+        if e != -1 and int(e) < len(emotion_w):
+            w_parts.append(emotion_w[int(e)].item())
+
+        if not w_parts:
+            weights[i] = min_weight
+        else:
+            if combine == "sum":
+                weights[i] = sum(w_parts)
+            elif combine == "max":
+                weights[i] = max(w_parts)
+            else:  # mean (default)
+                weights[i] = sum(w_parts) / len(w_parts)
+
+    # Normalize weights to have mean ~ 1.0 (keeps sampler numerically stable)
+    mean_w = weights.mean().clamp_min(1e-8)
+    weights = weights / mean_w
+
+    sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
+    return sampler, weights
 
 def get_image_transform(config):
     '''
