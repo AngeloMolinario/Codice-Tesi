@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from torchvision.transforms import transforms as T
 
 from transformers import AutoConfig
-from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, precision_recall_fscore_support
 import seaborn as sns
 
 from argparse import ArgumentParser
@@ -47,11 +47,122 @@ def print_accuracy_table(top1_acc, top2_acc, onebin_acc, outputdir=None):
     table_data.append(["Media", f"{avg_top1:.4f}", f"{avg_top2:.4f}", "N/A"])
 
     headers = ["Task", "Top-1 Accuracy", "Top-2 Accuracy", "1-Bin Accuracy (Age)"]
-    print(tabulate(table_data, headers=headers, tablefmt="grid"))
+    table_str = tabulate(table_data, headers=headers, tablefmt="grid")
+    print(table_str)
 
     if outputdir is not None:
         with open(os.path.join(outputdir, "accuracy.txt"), 'w') as f:
-            f.write(tabulate(table_data, headers=headers, tablefmt="grid"))
+            f.write(table_str)
+
+    return table_str
+
+
+def compute_prf_metrics(all_true_labels, all_pred_labels, classes_per_task):
+    """Compute macro Precision/Recall/F1 per task and per-class PRF for Age.
+
+    Returns:
+      - prf_task: dict with keys 'precision', 'recall', 'f1' each a list len=3
+      - prf_age_per_class: dict with keys 'precision', 'recall', 'f1' as lists (len = n_age_classes)
+    """
+    prf_task = {"precision": [0.0, 0.0, 0.0], "recall": [0.0, 0.0, 0.0], "f1": [0.0, 0.0, 0.0]}
+    prf_age_per_class = None
+
+    for task_idx in range(3):
+        y_true = all_true_labels[task_idx]
+        y_pred = all_pred_labels[task_idx]
+        if y_true and y_pred:
+            n_cls = len(classes_per_task[task_idx])
+            labels = list(range(n_cls))
+            try:
+                p, r, f1, _ = precision_recall_fscore_support(
+                    y_true, y_pred, labels=labels, average='macro', zero_division=0
+                )
+                prf_task["precision"][task_idx] = float(p)
+                prf_task["recall"][task_idx] = float(r)
+                prf_task["f1"][task_idx] = float(f1)
+            except Exception:
+                pass
+
+            # For Age task (idx 0), also compute per-class PRF
+            if task_idx == 0:
+                try:
+                    p_c, r_c, f1_c, _ = precision_recall_fscore_support(
+                        y_true, y_pred, labels=labels, average=None, zero_division=0
+                    )
+                    prf_age_per_class = {
+                        'precision': [float(x) for x in p_c],
+                        'recall': [float(x) for x in r_c],
+                        'f1': [float(x) for x in f1_c],
+                    }
+                except Exception:
+                    prf_age_per_class = None
+        else:
+            # leave zeros if no samples
+            pass
+
+    return prf_task, prf_age_per_class
+
+
+def write_final_report(outputdir, top1_acc, top2_acc, onebin_acc, age_per_class_metrics=None,
+                       prf_task=None, prf_age_per_class=None):
+    """
+    Scrive un report finale come UN'UNICA TABELLA che contiene:
+    - Righe complessive per Task (Age/Gender/Emotion) con Top-1, Top-2 e 1-Bin (solo Age)
+    - Righe per ciascun age-bin con Top-1, Top-2 e 1-Bin
+    """
+    os.makedirs(outputdir, exist_ok=True)
+
+    rows = []
+    # Overall rows
+    tasks = ['age', 'gender', 'emotion']
+    for i in range(len(top1_acc)):
+        prec = recall = f1 = "N/A"
+        if prf_task is not None:
+            try:
+                prec = f"{float(prf_task['precision'][i]):.4f}"
+                recall = f"{float(prf_task['recall'][i]):.4f}"
+                f1 = f"{float(prf_task['f1'][i]):.4f}"
+            except Exception:
+                pass
+        rows.append([
+            f"Task {tasks[i]} (Overall)",
+            f"{top1_acc[i]:.4f}",
+            f"{top2_acc[i]:.4f}",
+            f"{onebin_acc[i]:.4f}" if i == 0 else "N/A",
+            prec,
+            recall,
+            f1,
+        ])
+    # Average row computed ONLY on Top-1 across tasks
+    avg_top1 = sum(top1_acc) / max(1, len(top1_acc))
+    rows.append(["Media (Top-1)", f"{avg_top1:.4f}", "N/A", "N/A", "N/A", "N/A", "N/A"])
+
+    # Per-age-bin rows (if available)
+    if age_per_class_metrics is not None and all(
+        k in age_per_class_metrics for k in ("classes", "top1_accuracy", "top2_accuracy", "onebin_accuracy")
+    ):
+        classes = age_per_class_metrics["classes"]
+        t1 = age_per_class_metrics["top1_accuracy"]
+        t2 = age_per_class_metrics["top2_accuracy"]
+        ob = age_per_class_metrics["onebin_accuracy"]
+        # Try to attach per-class P/R/F1 if available
+        p_cls = r_cls = f1_cls = None
+        if prf_age_per_class is not None and all(k in prf_age_per_class for k in ("precision", "recall", "f1")):
+            p_cls = prf_age_per_class["precision"]
+            r_cls = prf_age_per_class["recall"]
+            f1_cls = prf_age_per_class["f1"]
+        for i, cname in enumerate(classes):
+            pr = f"{p_cls[i]:.4f}" if p_cls is not None and i < len(p_cls) else "N/A"
+            rc = f"{r_cls[i]:.4f}" if r_cls is not None and i < len(r_cls) else "N/A"
+            f1v = f"{f1_cls[i]:.4f}" if f1_cls is not None and i < len(f1_cls) else "N/A"
+            rows.append([f"Age Bin: {cname}", f"{t1[i]:.4f}", f"{t2[i]:.4f}", f"{ob[i]:.4f}", pr, rc, f1v])
+
+    headers = ["Elemento", "Top-1", "Top-2", "1-Bin (Age)", "Precision", "Recall", "F1"]
+    table_str = tabulate(rows, headers=headers, tablefmt="grid")
+
+    with open(os.path.join(outputdir, "final_report.txt"), "w", encoding="utf-8") as f:
+        f.write(table_str)
+    print(f"\nFinal report written to {os.path.join(outputdir, 'final_report.txt')}")
 
     
 
@@ -230,7 +341,7 @@ def _load_text_features_if_any(model, tokenizer, text_ckpt_path, device):
     if text_features is None:
         if hasattr(model, "text_model"):
             print("Building text features on-the-fly...")
-            text_features = get_text_features(model.text_model, tokenizer, normalize=True).to(device)
+            exit(0)
         else:
             raise RuntimeError("No text features provided and model has no text_model to build them.")
 
@@ -350,154 +461,6 @@ def load_model(model_type, num_prompt, ckpt_dir, device):
     else:
         raise NotImplementedError(f"Model type {model_type} not implemented.")
 
-def get_text_features(text_model, tokenizer, normalize=True):
-    """Crea le text features per (age, gender, emotion)."""
-    PROMPTS = [
-        [  # Age (9)
-            [
-                "a close-up portrait photo of a person who appears to be a newborn (0-2 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a newborn (0-2 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a newborn (0-2 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a newborn (0-2 years old), soft lighting",
-                "a candid portrait of a person who appears to be a newborn (0-2 years old), minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of a person who appears to be a young child (3-9 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a young child (3-9 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a young child (3-9 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a young child (3-9 years old), soft lighting",
-                "a candid portrait of a person who appears to be a young child (3-9 years old), minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of a person who appears to be a teenager (10-19 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a teenager (10-19 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a teenager (10-19 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a teenager (10-19 years old), soft lighting",
-                "a candid portrait of a person who appears to be a teenager (10-19 years old), minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of a person who appears to be a young adult (20-29 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be a young adult (20-29 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be a young adult (20-29 years old), centered face",
-                "a detailed facial photograph of a person who appears to be a young adult (20-29 years old), soft lighting",
-                "a candid portrait of a person who appears to be a young adult (20-29 years old), minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of a person who appears to be an adult in their 30s (30-39 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be an adult in their 30s (30-39 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be an adult in their 30s (30-39 years old), centered face",
-                "a detailed facial photograph of a person who appears to be an adult in their 30s (30-39 years old), soft lighting",
-                "a candid portrait of a person who appears to be an adult in their 30s (30-39 years old), minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of a person who appears to be in their 40s (40-49 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 40s (40-49 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 40s (40-49 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 40s (40-49 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 40s (40-49 years old), minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of a person who appears to be in their 50s (50-59 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 50s (50-59 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 50s (50-59 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 50s (50-59 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 50s (50-59 years old), minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of a person who appears to be in their 60s (60-69 years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 60s (60-69 years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 60s (60-69 years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 60s (60-69 years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 60s (60-69 years old), minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of a person who appears to be in their 70s or older (70+ years old), face clearly visible, neutral background",
-                "a studio headshot of a person who appears to be in their 70s or older (70+ years old), looking at the camera",
-                "a passport-style photo of a person who appears to be in their 70s or older (70+ years old), centered face",
-                "a detailed facial photograph of a person who appears to be in their 70s or older (70+ years old), soft lighting",
-                "a candid portrait of a person who appears to be in their 70s or older (70+ years old), minimal shadows"
-            ]
-        ],
-        [  # Gender (2)
-            [
-                "a close-up portrait photo of an adult person who appears male-presenting, face clearly visible, plain background",
-                "a studio headshot of an adult person who appears male-presenting, looking at the camera, neutral expression",
-                "a passport-style photo of an adult person who appears male-presenting, centered face, plain background",
-                "a detailed facial photograph of an adult person who appears male-presenting, soft lighting",
-                "a candid portrait of an adult person who appears male-presenting, minimal shadows"
-            ],
-            [
-                "a close-up portrait photo of an adult person who appears female-presenting, face clearly visible, plain background",
-                "a studio headshot of an adult person who appears female-presenting, looking at the camera, neutral expression",
-                "a passport-style photo of an adult person who appears female-presenting, centered face, plain background",
-                "a detailed facial photograph of an adult person who appears female-presenting, soft lighting",
-                "a candid portrait of an adult person who appears female-presenting, minimal shadows"
-            ]
-        ],
-        [  # Emotion (7)
-            [
-                "a close-up portrait photo of a person showing surprised expression, raised brows, wide eyes, open mouth, face clearly visible",
-                "a studio headshot of a person showing surprised expression, raised brows, wide eyes, open mouth, plain background",
-                "a detailed facial photograph of a person showing surprised expression, raised brows, wide eyes, open mouth, soft lighting",
-                "a candid portrait of a person showing surprised expression, raised brows, wide eyes, open mouth, minimal shadows",
-                "a passport-style photo of a person showing surprised expression, raised brows, wide eyes, open mouth"
-            ],
-            [
-                "a close-up portrait photo of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth, face clearly visible",
-                "a studio headshot of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth, plain background",
-                "a detailed facial photograph of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth, soft lighting",
-                "a candid portrait of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth, minimal shadows",
-                "a passport-style photo of a person showing fearful expression, wide eyes, brows raised and drawn together, slightly open mouth"
-            ],
-            [
-                "a close-up portrait photo of a person showing disgusted expression, nose wrinkling, upper lip raised, face clearly visible",
-                "a studio headshot of a person showing disgusted expression, nose wrinkling, upper lip raised, plain background",
-                "a detailed facial photograph of a person showing disgusted expression, nose wrinkling, upper lip raised, soft lighting",
-                "a candid portrait of a person showing disgusted expression, nose wrinkling, upper lip raised, minimal shadows",
-                "a passport-style photo of a person showing disgusted expression, nose wrinkling, upper lip raised"
-            ],
-            [
-                "a close-up portrait photo of a person showing happy expression, smile, raised cheeks, lip corners pulled up, face clearly visible",
-                "a studio headshot of a person showing happy expression, smile, raised cheeks, lip corners pulled up, plain background",
-                "a detailed facial photograph of a person showing happy expression, smile, raised cheeks, lip corners pulled up, soft lighting",
-                "a candid portrait of a person showing happy expression, smile, raised cheeks, lip corners pulled up, minimal shadows",
-                "a passport-style photo of a person showing happy expression, smile, raised cheeks, lip corners pulled up"
-            ],
-            [
-                "a close-up portrait photo of a person showing sad expression, downturned lip corners, inner brows raised, face clearly visible",
-                "a studio headshot of a person showing sad expression, downturned lip corners, inner brows raised, plain background",
-                "a detailed facial photograph of a person showing sad expression, downturned lip corners, inner brows raised, soft lighting",
-                "a candid portrait of a person showing sad expression, downturned lip corners, inner brows raised, minimal shadows",
-                "a passport-style photo of a person showing sad expression, downturned lip corners, inner brows raised"
-            ],
-            [
-                "a close-up portrait photo of a person showing angry expression, brows lowered and drawn together, tense lips, face clearly visible",
-                "a studio headshot of a person showing angry expression, brows lowered and drawn together, tense lips, plain background",
-                "a detailed facial photograph of a person showing angry expression, brows lowered and drawn together, tense lips, soft lighting",
-                "a candid portrait of a person showing angry expression, brows lowered and drawn together, tense lips, minimal shadows",
-                "a passport-style photo of a person showing angry expression, brows lowered and drawn together, tense lips"
-            ],
-            [
-                "a close-up portrait photo of a person showing neutral expression, relaxed facial muscles, no pronounced expression, face clearly visible",
-                "a studio headshot of a person showing neutral expression, relaxed facial muscles, no pronounced expression, plain background",
-                "a detailed facial photograph of a person showing neutral expression, relaxed facial muscles, no pronounced expression, soft lighting",
-                "a candid portrait of a person showing neutral expression, relaxed facial muscles, no pronounced expression, minimal shadows",
-                "a passport-style photo of a person showing neutral expression, relaxed facial muscles, no pronounced expression"
-            ]
-        ]
-    ]
-
-    task_text_features = []
-    for task_prompts in PROMPTS:
-        for class_prompts in task_prompts:
-            tokens = tokenizer(class_prompts).to(text_model.device)
-            text_f = text_model(text=tokens, normalize=False)
-            class_feat = text_f.mean(dim=0)
-            class_feat = F.normalize(class_feat, dim=-1) if normalize else class_feat
-            task_text_features.append(class_feat)
-    text_features = torch.stack(task_text_features, dim=0)  # [9+2+7, hidden]
-    return text_features
-
 def get_image_features(model, image, normalize=True):
     if hasattr(model, "get_image_features"):
         return model.get_image_features(image=image, normalize=normalize)
@@ -523,6 +486,13 @@ def validate(model, dataloader, device, use_tqdm):
     all_true_labels = [[] for _ in range(3)]
     all_pred_labels = [[] for _ in range(3)]
 
+    # Age per-class metrics (9-bin space)
+    age_num_classes = None
+    age_total_per_class = None
+    age_correct_top1_per_class = None
+    age_correct_top2_per_class = None
+    age_correct_1bin_per_class = None
+
     iterator = tqdm(dataloader) if use_tqdm else dataloader
     with torch.no_grad():
         for i, (images, labels) in enumerate(iterator):
@@ -546,11 +516,30 @@ def validate(model, dataloader, device, use_tqdm):
                 all_true_labels[task_idx].extend(valid_task_labels.cpu().tolist())
                 all_pred_labels[task_idx].extend(valid_top2_preds[:, 0].cpu().tolist())
 
-                # Calcolo 1-bin accuracy per il task "age"
+                # Calcolo 1-bin accuracy e per-class metrics per il task "age"
                 if task_idx == 0:
-                    for j, true_label in enumerate(valid_task_labels):
-                        pred_label = valid_top2_preds[j, 0]
-                        if abs(pred_label - true_label) <= 1:
+                    # Initialize per-class containers lazily
+                    if age_num_classes is None:
+                        age_num_classes = task_logits.size(1)
+                        age_total_per_class = [0] * age_num_classes
+                        age_correct_top1_per_class = [0] * age_num_classes
+                        age_correct_top2_per_class = [0] * age_num_classes
+                        age_correct_1bin_per_class = [0] * age_num_classes
+
+                    vt_cpu = valid_task_labels.detach().cpu()
+                    vp_cpu = valid_top2_preds.detach().cpu()
+                    for j in range(vt_cpu.size(0)):
+                        t = int(vt_cpu[j].item())
+                        p1 = int(vp_cpu[j, 0].item())
+                        p2 = int(vp_cpu[j, 1].item())
+                        age_total_per_class[t] += 1
+                        if p1 == t:
+                            age_correct_top1_per_class[t] += 1
+                        if p1 == t or p2 == t:
+                            age_correct_top2_per_class[t] += 1
+                        if abs(p1 - t) <= 1:
+                            age_correct_1bin_per_class[t] += 1
+                        if abs(p1 - t) <= 1:
                             total_correct_1bin[task_idx] += 1
 
             if not use_tqdm and i % 30 == 0:
@@ -560,7 +549,32 @@ def validate(model, dataloader, device, use_tqdm):
     top2_accuracy = [total_correct_top2[i] / max(1, total_samples[i]) for i in range(3)]
     onebin_accuracy = [0.0] * 3  # Inizializza con zeri
     onebin_accuracy[0] = total_correct_1bin[0] / max(1, total_samples[0])  # Calcola solo per age
-    return top1_accuracy, top2_accuracy, onebin_accuracy, all_true_labels, all_pred_labels
+
+    # Build age per-class metrics dict (9-bin space)
+    def _safe_div(num, den):
+        return float(num) / float(den) if den and den > 0 else 0.0
+
+    if age_num_classes is None:
+        # No valid age labels encountered; fallback to current CLASSES[0]
+        age_classes = list(CLASSES[0])
+        n = len(age_classes)
+        age_top1_acc_per_class = [0.0] * n
+        age_top2_acc_per_class = [0.0] * n
+        age_onebin_acc_per_class = [0.0] * n
+    else:
+        age_classes = list(CLASSES[0])[:age_num_classes]
+        age_top1_acc_per_class = [_safe_div(c, t) for c, t in zip(age_correct_top1_per_class, age_total_per_class)]
+        age_top2_acc_per_class = [_safe_div(c, t) for c, t in zip(age_correct_top2_per_class, age_total_per_class)]
+        age_onebin_acc_per_class = [_safe_div(c, t) for c, t in zip(age_correct_1bin_per_class, age_total_per_class)]
+
+    age_per_class_metrics = {
+        'classes': age_classes,
+        'top1_accuracy': age_top1_acc_per_class,
+        'top2_accuracy': age_top2_acc_per_class,
+        'onebin_accuracy': age_onebin_acc_per_class,
+    }
+
+    return top1_accuracy, top2_accuracy, onebin_accuracy, all_true_labels, all_pred_labels, age_per_class_metrics
 
 
 def ValidatePaliGemma(model, dataloader, device, use_tqdm, age5_classes=None):
@@ -792,12 +806,25 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
         num_workers=min(4, os.cpu_count() or 0)
     )
     if not paligemma:
-        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels = validate(model, dataloader, device, use_tqdm)
+        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = validate(model, dataloader, device, use_tqdm)
+        # Age classes remain as defined in CLASSES[0]
     else:
-        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, cls = ValidatePaliGemma(model, dataloader, device, use_tqdm)
-        CLASSES[0] = cls["classes"]
+        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = ValidatePaliGemma(model, dataloader, device, use_tqdm)
+        CLASSES[0] = age_metrics["classes"]
+
+    # Precision/Recall/F1 (macro) per task + per-class for Age
+    prf_task, prf_age_cls = compute_prf_metrics(all_true_labels, all_pred_labels, CLASSES)
 
     print_accuracy_table(top1_acc, top2_acc, onebin_acc, output_path)
+    write_final_report(
+        output_path,
+        top1_acc,
+        top2_acc,
+        onebin_acc,
+        age_per_class_metrics=age_metrics,
+        prf_task=prf_task,
+        prf_age_per_class=prf_age_cls,
+    )
 
     # Confusion matrices (stampa + salvataggio immagini)
     confusion_mats = []
@@ -824,30 +851,221 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
     plot_error_distribution(all_true_labels[1], all_pred_labels[1], CLASSES[1], os.path.join(output_path, "gender_error_distributions"))
     plot_error_distribution(all_true_labels[2], all_pred_labels[2], CLASSES[2], os.path.join(output_path, "emotion_error_distributions"))
 
+def _process_single_dataset(model, image_processor, device, batch_size, dataset_path, output_path, use_tqdm, paligemma):
+    os.makedirs(output_path, exist_ok=True)
+
+    dataset = BaseDataset(
+        root=dataset_path,
+        transform=image_processor,
+        split="test",
+        verbose=False
+    )
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=min(4, os.cpu_count() or 0)
+    )
+
+    if not paligemma:
+        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = validate(model, dataloader, device, use_tqdm)
+    else:
+        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = ValidatePaliGemma(model, dataloader, device, use_tqdm)
+        CLASSES[0] = age_metrics["classes"]
+
+    # Precision/Recall/F1 (macro) per task + per-class for Age
+    prf_task, prf_age_cls = compute_prf_metrics(all_true_labels, all_pred_labels, CLASSES)
+
+    print_accuracy_table(top1_acc, top2_acc, onebin_acc, output_path)
+    write_final_report(
+        output_path,
+        top1_acc,
+        top2_acc,
+        onebin_acc,
+        age_per_class_metrics=age_metrics,
+        prf_task=prf_task,
+        prf_age_per_class=prf_age_cls,
+    )
+
+    confusion_mats = []
+    task_names = ["Age", "Gender", "Emotion"]
+    for task_idx in range(3):
+        unique_labels = sorted(set(all_true_labels[task_idx] + all_pred_labels[task_idx]))
+        if not unique_labels:
+            print(f"No labels present for Task {task_names[task_idx]}, skipping confusion matrix.")
+            confusion_mats.append(None)
+            continue
+
+        cm = confusion_matrix(all_true_labels[task_idx], all_pred_labels[task_idx], labels=unique_labels)
+        confusion_mats.append(cm)
+        print(f"\nConfusion Matrix for Task {task_names[task_idx]}:\n{cm}")
+
+    save_confusion_matrices_as_images(confusion_mats, CLASSES, os.path.join(output_path, "confusion_matrices"))
+
+    plot_error_distribution(all_true_labels[0], all_pred_labels[0], CLASSES[0], os.path.join(output_path, "age_error_distributions"))
+    plot_error_distribution(all_true_labels[1], all_pred_labels[1], CLASSES[1], os.path.join(output_path, "gender_error_distributions"))
+    plot_error_distribution(all_true_labels[2], all_pred_labels[2], CLASSES[2], os.path.join(output_path, "emotion_error_distributions"))
+
+    # Return collected metrics so that multi-dataset entrypoint can build a summary
+    return top1_acc, top2_acc, onebin_acc
+
+def main_multi(model_type, dataset_paths, batch_size, output_base_path, use_tqdm, num_prompt, ckpt_dir, paligemma):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Load model once
+    model, image_processor, tokenizer, text_feats_path = load_model(
+        model_type=model_type,
+        num_prompt=num_prompt,
+        ckpt_dir=ckpt_dir,
+        device=device
+    )
+    model.to(device)
+
+    text_features = _load_text_features_if_any(model, tokenizer, text_feats_path, device)
+    if hasattr(model, "text_features"):
+        model.text_features = text_features
+
+    print(f"Number of parameters : {count_parameters(model)}")
+
+    base_out = output_base_path if output_base_path is not None else 'output'
+    os.makedirs(base_out, exist_ok=True)
+
+    valid_paths = []
+    for dp in dataset_paths:
+        if os.path.isdir(dp):
+            valid_paths.append(dp)
+        else:
+            print(f"Warning: dataset path '{dp}' does not exist. Skipping.")
+
+    if len(valid_paths) == 0:
+        raise RuntimeError("No valid dataset paths provided.")
+
+    # Collect per-dataset accuracies for summary (Age/Gender/Emotion)
+    dataset_names = []
+    age_top1_list, age_top2_list = [], []
+    gender_top1_list, gender_top2_list = [], []
+    emotion_top1_list, emotion_top2_list = [], []
+
+    for dp in valid_paths:
+        ds_name = os.path.basename(os.path.normpath(dp))
+        out_dir = os.path.join(output_base_path if output_base_path is not None else base_out, ds_name)
+        print(f"\n=== Running evaluation on dataset: {ds_name} ===")
+        top1_acc, top2_acc, _onebin_acc = _process_single_dataset(
+            model=model,
+            image_processor=image_processor,
+            device=device,
+            batch_size=batch_size,
+            dataset_path=dp,
+            output_path=out_dir,
+            use_tqdm=use_tqdm,
+            paligemma=paligemma,
+        )
+
+        # Store per-task accuracies (indices: 0=age,1=gender,2=emotion)
+        dataset_names.append(ds_name)
+        def _safe_get(lst, idx):
+            try:
+                return float(lst[idx])
+            except Exception:
+                return 0.0
+        age_top1_list.append(_safe_get(top1_acc, 0))
+        age_top2_list.append(_safe_get(top2_acc, 0))
+        gender_top1_list.append(_safe_get(top1_acc, 1))
+        gender_top2_list.append(_safe_get(top2_acc, 1))
+        emotion_top1_list.append(_safe_get(top1_acc, 2))
+        emotion_top2_list.append(_safe_get(top2_acc, 2))
+
+    # Build and save summary table across datasets
+    if dataset_names:
+        try:
+            from tabulate import tabulate
+        except Exception:
+            tabulate = None
+
+        headers = ["Metric"] + dataset_names
+        # Media computed only on Top-1 accuracy across tasks
+        avg_top1_per_dataset = [
+            (a + g + e) / 3.0 for a, g, e in zip(age_top1_list, gender_top1_list, emotion_top1_list)
+        ]
+        table = [
+            ["Top-1 (Age)"] + [f"{v:.4f}" for v in age_top1_list],
+            ["Top-1 (Gender)"] + [f"{v:.4f}" for v in gender_top1_list],
+            ["Top-1 (Emotion)"] + [f"{v:.4f}" for v in emotion_top1_list],
+            ["Top-2 (Age)"] + [f"{v:.4f}" for v in age_top2_list],
+            ["Top-2 (Gender)"] + [f"{v:.4f}" for v in gender_top2_list],
+            ["Top-2 (Emotion)"] + [f"{v:.4f}" for v in emotion_top2_list],
+            ["Media (Top-1 across tasks)"] + [f"{v:.4f}" for v in avg_top1_per_dataset],
+        ]
+
+        # Write a more complete final summary file
+        summary_txt_path = os.path.join(base_out, "summary_final.txt")
+        try:
+            if tabulate is not None:
+                table_str = tabulate(table, headers=headers, tablefmt="grid")
+            else:
+                # Fallback simple formatting
+                table_str = "\t".join(headers) + "\n" + "\n".join(["\t".join(row) for row in table])
+            with open(summary_txt_path, "w", encoding="utf-8") as f:
+                f.write(table_str)
+            # Backward compatibility: also write to summary_age.txt with same content
+            try:
+                with open(os.path.join(base_out, "summary_age.txt"), "w", encoding="utf-8") as f2:
+                    f2.write(table_str)
+            except Exception as e2:
+                print(f"Warning: failed to also write summary_age.txt: {e2}")
+            print(f"\nSaved summary table to: {summary_txt_path}")
+            if tabulate is not None:
+                print("\nSummary (Final across datasets):")
+                print(table_str)
+        except Exception as e:
+            print(f"Failed to write summary table to '{summary_txt_path}': {e}")
+
 def argparse_args():
     parser = ArgumentParser()
     parser.add_argument('--model_type', type=str, default='PECoreBase',
                         choices=['PECoreBase', "Siglip2Base", "PECoreVPT", "Siglip2VPT",
                                  "PECoreSoftCPT", "Siglip2SoftCPT", "PECoreVPT_single", "Siglip2VPT_single"],
                         help='Type of model to use.')
-    parser.add_argument('--dataset_path', type=str, required=True, help='Path to the dataset.')
+    # Single dataset (backward compatible)
+    parser.add_argument('--dataset_path', type=str, help='Path to a single dataset.')
+    # Multiple datasets in one run
+    parser.add_argument('--dataset_paths', type=str, nargs='+', help='Paths to multiple datasets.')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size for DataLoader.')
-    parser.add_argument('--output_path', type=str, default='output', help='Path to save outputs like confusion matrices.')
+    # In multi-dataset mode, this acts as base if --output_base_path is not given
+    parser.add_argument('--output_path', type=str, default='output', help='Output path (single) or base path (multi).')
+    parser.add_argument('--output_base_path', type=str, help='Base output path when using --dataset_paths.')
     parser.add_argument('--no_tqdm', action='store_true', help='Disable tqdm progress bar.')
     parser.add_argument('--num_prompt', type=int, default=0, help='Number of prompt tokens to use (only for VPT models).')
     parser.add_argument('--ckpt_dir', type=str, required=True, help='Path to the ckpt directory containing saved artifacts.')
     parser.add_argument("--paligemma", action='store_true', help='Test using paligemma class')
-    return parser.parse_args()
+
+    args = parser.parse_args()
+    if not args.dataset_path and not args.dataset_paths:
+        parser.error('Please specify --dataset_path or --dataset_paths.')
+    return args
 
 if __name__ == "__main__":
     args = argparse_args()
-    main(
-        model_type=args.model_type,
-        dataset_path=args.dataset_path,
-        batch_size=args.batch_size,
-        output_path=args.output_path,
-        use_tqdm=not args.no_tqdm,
-        num_prompt=args.num_prompt,
-        ckpt_dir=args.ckpt_dir,
-        paligemma=args.paligemma
-    )
+    if args.dataset_paths:
+        main_multi(
+            model_type=args.model_type,
+            dataset_paths=args.dataset_paths,
+            batch_size=args.batch_size,
+            output_base_path=args.output_base_path or args.output_path,
+            use_tqdm=not args.no_tqdm,
+            num_prompt=args.num_prompt,
+            ckpt_dir=args.ckpt_dir,
+            paligemma=args.paligemma,
+        )
+    else:
+        main(
+            model_type=args.model_type,
+            dataset_path=args.dataset_path,
+            batch_size=args.batch_size,
+            output_path=args.output_path,
+            use_tqdm=not args.no_tqdm,
+            num_prompt=args.num_prompt,
+            ckpt_dir=args.ckpt_dir,
+            paligemma=args.paligemma
+        )
