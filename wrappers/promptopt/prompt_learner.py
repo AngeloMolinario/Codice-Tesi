@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from core.vision_encoder import tokenizer
-
+import itertools
 
 class VisionPromptLearner(nn.Module):
     def __init__(self, num_prompt: int, emb_size: int, is_cls_present: bool = False):

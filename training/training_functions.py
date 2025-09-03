@@ -149,7 +149,8 @@ def get_model(config):
                 tasknames=config.TASK_NAMES,
                 classnames=config.CLASSES,
                 model=base_model,
-                tokenizer=get_tokenizer(config)
+                tokenizer=get_tokenizer(config),
+                cls_spc=config.CSP
             )
             return model
         
@@ -164,7 +165,8 @@ def get_model(config):
                 tasknames=config.TASK_NAMES,
                 classnames=config.CLASSES,
                 model=base_model,
-                tokenizer=get_tokenizer(config)
+                tokenizer=get_tokenizer(config),
+                cls_spc=config.CSP
             )
             return model
         else:

@@ -515,7 +515,7 @@ def main():
             if w_i is None:
                 w_i=1.0
             w.append((1.0 / max(w_i, 1e-8)))
-        max_raw = sum(w) / len(w)
+        max_raw = max(w)
         task_weight = torch.tensor([r / max_raw for r in w], device=DEVICE)
         
 

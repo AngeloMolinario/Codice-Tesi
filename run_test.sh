@@ -7,9 +7,9 @@ MODEL_TYPE="Siglip2SoftCPT"
 DATASETS=("FairFace" "UTKFace" "RAF-DB" "LFW" "CelebA_HQ")  # List of datasets
 BATCH_SIZE=64
 BASE_DATASET_PATH="../processed_datasets/datasets_with_standard_labels"
-BASE_OUTPUT_PATH="../TEST/Siglip2/SoftCPT/00000001_val"
+BASE_OUTPUT_PATH="../TEST/Siglip2/SoftCPT/00000001_class_specific"
 NUM_PROMPT=0
-CKPT_DIR="../TRAIN/Siglip2/SoftCPT/00000001/ckpt"
+CKPT_DIR="../TRAIN/Siglip2/SoftCPT/00000001_class_specific/ckpt"
 USE_TQDM="" # set to "--no_tqdm" to disable
 PALIGEMMA="" # set to "--paligemma" to enable
 
