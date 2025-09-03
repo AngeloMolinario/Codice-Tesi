@@ -291,7 +291,7 @@ class CustomModel(nn.Module):
         self.cls_spc = cls_spc
         # CLASS SPECIFIC TRAINING
         if cls_spc:
-            self.class_prompt_learner = ClassPromptLearner(n_ctx, classnames, model.text_model, tokenizer)
+            self.class_prompt_learner = ClassPromptLearner(n_ctx,  list(itertools.chain.from_iterable(classnames)), model.text_model, tokenizer)
             self.class_tokenized_prompts = self.class_prompt_learner.tokenized_prompts
 
         self.model = model    
