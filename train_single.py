@@ -280,7 +280,7 @@ def main():
             print(f"Parameter: {name}, shape: {param.shape}, numel: {param.numel()}")
         else:
             param.requires_grad = False
-    optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=0.0)
 
     # GradScaler for mixed precision
     scaler = GradScaler(device=DEVICE)
@@ -309,7 +309,7 @@ def main():
     print(f"Tracking metrics for task {task_names[0]}")
 
     # Early stopping
-    patience = 8
+    patience = config.PATIENCE
     best_val_loss = float("inf")
     epochs_without_improvement = 0
     best_accuracy = 0.0
@@ -319,20 +319,14 @@ def main():
     train_fn = single_task_train_fn
     val_fn = single_task_val_fn
 
-    text_features = None
     
-    tokenizer = get_tokenizer(config)
-    
-    task_text_features = []    
-    for classes in config.TEXT_CLASSES_PROMPT[config.TASK]:
-        text = tokenizer(classes).to(DEVICE)
-        classes_features = F.normalize(model.get_text_features(text=text, normalize=False).mean(dim=0), dim=-1)
-        task_text_features.append(classes_features)
-
-    text_features = torch.stack(task_text_features, dim=0)    
-    print(f"Text features shape: {text_features.shape}")
+    text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
+    model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
+    print(f"Text features loaded shape: {text_features.shape}")
     torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
 
+    text_features = torch.split(text_features, (9,2,7))[config.TASK]
+    print(f"text_features task shape {text_features.shape}")
 
     for epoch in range(config.EPOCHS):
 
@@ -388,22 +382,12 @@ def main():
             if val_loss[0] < best_val_loss:
                 best_val_loss = val_loss[0]
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving artifacts...")
-                if config.TUNING.lower() == 'softcpt':
-                    # Save current text features for best validation loss
-                    tf_path = os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bval.pt")
-                    torch.save(model.get_text_features(normalize=True), tf_path)
-                else:
-                    # Save VPT token for best validation loss
-                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
+                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
 
             if val_acc[0] > best_accuracy:
                 best_accuracy = val_acc[0]
                 print(f"New best validation accuracy: {best_accuracy:.4f}. Saving artifacts...")
-                if config.TUNING.lower() == 'softcpt':
-                    tf_path = os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bacc.pt")
-                    torch.save(model.get_text_features(normalize=True), tf_path)
-                else:
-                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bacc.pt"))
+                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bacc.pt"))
 
             epochs_without_improvement = 0            
         else:
@@ -414,7 +398,6 @@ def main():
             break
 
         
-        torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, f"ckpt/last_model.pt"))
         scheduler.step()
         lr_history.append(optimizer.param_groups[0]['lr'])
 

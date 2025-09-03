@@ -93,6 +93,8 @@ class OrdinalAgeLossEMD_(nn.Module):
         else:        
             normalized_emd_loss = weighted_emd_loss / (self.num_classes - 1)
         
+
+
         total_loss = ce_loss + self.lambda_ordinal * normalized_emd_loss
 
         return total_loss
@@ -117,7 +119,7 @@ class OrdinalAgeLossEMD(nn.Module):
                  plus_cap=90,          # limite superiore per "70+"
                  normalize_D=True,     # normalizza D su [0,1] dividendo per D.max()
                  omega=3.0,              # ω nell'Eq.16 (XEMD2 usa ω=2)
-                 mu=-0.01             # μ nell'Eq.16 (paper: μ negativo per "premiare" vicini)
+                 mu=-0.0             # μ nell'Eq.16 (paper: μ negativo per "premiare" vicini)
                  ):
         super().__init__()
         self.num_classes = num_classes
@@ -207,7 +209,9 @@ class OrdinalAgeLossEMD(nn.Module):
 
         # Termine di regolarizzazione Eq.16
         reg = self._emd_regularizer_eq16(probs, targets)
-        
+
+        #print(f"CE Loss: {ce.item():.4f}, EMD Reg: {reg.item():.4f}, total_loss_weighted: {self.lambda_ordinal*reg:.4f} - Total {ce.item() + self.lambda_ordinal*reg:.4f}")
+
         total = ce + self.lambda_ordinal * reg
         return total
 
@@ -219,7 +223,7 @@ class CrossEntropyLoss():
         self.factor = math.log(num_classes)
 
     def __call__(self, logit, true_labels):
-        loss = self.ce(logit, true_labels)#  / self.factor
+        loss = self.ce(logit, true_labels) # / self.factor
 
         return loss
 

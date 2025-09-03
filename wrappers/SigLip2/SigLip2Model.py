@@ -128,6 +128,18 @@ class Siglip2Model(SiglipPreTrainedModel):
         torch.save(out_sd, save_path)
         print(f"[Siglip2Model] Vision model saved (vision_model.* + logit_scale[/bias]) to {save_path}")
 
+    def save_vpt_token(self, save_path):
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        if hasattr(self.vision_model, 'prompt_learner') and self.vision_model.prompt_learner is not None:
+            state_dict = {
+                'prompt_learner' : self.vision_model.prompt_learner.state_dict()
+            }
+            torch.save(state_dict, save_path)
+            print(f"VPT token saved in {save_path}")
+
+        else:
+            print(f"Prompt learner not found in vision model, skipping save.")
+                
     def load_model(self, path, map_location, repo_id="google/siglip2-base-patch16-224", filename="model.safetensors"):
         # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
 
@@ -226,6 +238,7 @@ class Siglip2Vision(nn.Module):
         config.torch_dtype = "float32"        
         config.vision_config.torch_dtype = "float32"
         self.config = config            
+        self.num_prompt = num_prompt
         
         # If num prompt is 0 than the model is the pure baseline
         self.vision_model = SiglipVisionModel(vision_config, num_prompt=num_prompt)
@@ -304,7 +317,7 @@ class Siglip2Vision(nn.Module):
         if 'prompt_learner' in checkpoint:
             # Inizializza un'istanza di VisionPromptLearner
             vpt = VisionPromptLearner(
-                emb_size=self.visual.embed_dim,
+                emb_size=self.config.vision_config.hidden_size,
                 num_prompt=self.num_prompt,
                 is_cls_present=False
             )

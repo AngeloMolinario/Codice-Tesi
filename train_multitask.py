@@ -16,6 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import numpy
 import seaborn as sns
+import torch.nn.functional as F
 from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 from wrappers.PerceptionEncoder.pe import PECore
 from wrappers.promptopt.prompt_learner import CustomModel
@@ -38,7 +39,12 @@ def get_loss_fn(config, weights=[None, None, None]):
         1. Gender loss
         2. Emotion loss
     '''
-    age_loss = OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights[0], lambda_ordinal=config.EMD_WEIGHT)
+    age_loss = OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]),
+                                class_frequencies=weights[0],
+                                lambda_ordinal=config.EMD_WEIGHT,
+                                omega=config.EMD_OMEGA,
+                                mu = config.EMD_MU
+                                )
 
     gender_loss = CrossEntropyLoss(num_classes=len(config.CLASSES[1]), weights=weights[1])
     emotion_loss = CrossEntropyLoss(num_classes=len(config.CLASSES[2]), weights=weights[2])
@@ -299,7 +305,8 @@ def main():
     model = get_model(config).to(DEVICE)
 
     # Save the vision model right after loading
-    model.save_vision_model(config.OUTPUT_DIR, filename="vision_ckpt.pt")
+    os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
+    model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
 
     #############################################################################################
     ##                         Dataset and Dataloade building                                  ##
@@ -323,7 +330,7 @@ def main():
         num_workers=config.NUM_WORKERS,
         pin_memory_device="cuda",
         persistent_workers=True,
-        pin_memory=True,
+        pin_memory=(DEVICE == 'cuda'),
         drop_last=True,
         prefetch_factor=config.PREFETCH_FACTOR
     )
@@ -358,7 +365,7 @@ def main():
         sampler=sampler,
         shuffle=False,
         num_workers=config.NUM_WORKERS,
-        pin_memory=True,
+        pin_memory=(DEVICE == 'cuda'),
         pin_memory_device="cuda",
         persistent_workers=True,
         drop_last=True,
@@ -387,8 +394,8 @@ def main():
             param.requires_grad = False
     optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=0.0)
 
-    # Add GradScaler for mixed precision
-    scaler = GradScaler(device=DEVICE)
+    # Add GradScaler for mixed precision (CUDA only)
+    scaler = GradScaler(enabled=(DEVICE == 'cuda'))
     # Add CosineAnnealingLR scheduler
     scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
     # Lista per tracciare il learning rate
@@ -441,7 +448,7 @@ def main():
     print(f"Tracking metrics for multitask: {task_names}")
 
     # EARLY STOPPING BASED ON LOSS
-    patience = 14
+    patience = config.PATIENCE
     best_val_loss = float("inf")
     epochs_without_improvement = 0
     best_accuracy = 0.0
@@ -454,6 +461,7 @@ def main():
     running_mean = RunningMeans(['age', 'gender', 'emotion'], alpha=0.95)
     text_features = None
     if config.TUNING.lower() != 'softcpt':
+        '''
         tokenizer = get_tokenizer(config)
         
         task_text_features = []
@@ -464,8 +472,10 @@ def main():
                 task_text_features.append(classes_features)        
         text_features = torch.stack(task_text_features, dim=0)
         torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
-        
+        '''
         text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
+        # SAve the features in the ckpt folder
+        torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
         print(f"Text features shape: {text_features.shape}")
 
 
@@ -493,9 +503,9 @@ def main():
             if w_i is None:
                 w_i=1.0
             w.append((1.0 / max(w_i, 1e-8)))
-        max_raw = sum(w)/len(w) #max(w)
+        max_raw = sum(w) / len(w)
         task_weight = torch.tensor([r / max_raw for r in w], device=DEVICE)
-
+        
 
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")
         weights_history.append(task_weight.cpu().numpy())
@@ -580,6 +590,7 @@ def main():
         tracker.plot_accuracy()
         tracker.save()        
         if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
+            model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
             if val_loss[-1] < best_val_loss:
                 best_val_loss = val_loss[-1]
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
