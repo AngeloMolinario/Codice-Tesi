@@ -216,6 +216,16 @@ def plot_prob_evolution(base_dir, class_names, upto_epoch=None):
 
 
 def main():
+    # ------------------ REPRODUCIBILITY ------------------
+    seed = 2025 
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # -----------------------------------------------------
     # Load configuration from JSON file
     configuration_path = sys.argv[1] if len(sys.argv) > 1 else "config/PECore_VPT_age.json"
     config = Config(configuration_path)

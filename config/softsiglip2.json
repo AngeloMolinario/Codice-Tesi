@@ -32,10 +32,10 @@
     "BATCH_SIZE" : 256,
     "NUM_WORKERS" : 4,
     "LR" : 0.002,
-    "OUTPUT_DIR" : "../TRAIN/Siglip2/SoftCPT/00000001_vgg",
+    "OUTPUT_DIR" : "../TRAIN/Siglip2/SoftCPT/00000001_class_specific",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
-    "USE_TQDM": false,
-    "EPOCHS" : 50,
+    "USE_TQDM": true,
+    "EPOCHS" : 5,
     "PATIENCE" : 15
 }

@@ -55,7 +55,7 @@ class PromptLearner(nn.Module):
         dtype = textModel.get_token_embedding_layer().weight.dtype  # Get the dtype from the text model
 
         # Generate the prompt placeholders for the tokenizer
-        prompt_prefix = " ".join(["X"] * n_ctx)
+        prompt_prefix = " " + " ".join(["X"] * n_ctx)
         if verbose:
             print(f'Initial context: "{prompt_prefix}"')
             print(f"Number of context words (tokens): {n_ctx}")
@@ -169,22 +169,86 @@ class TaskPromptLearner(nn.Module):
         
         return torch.cat([ctx, self.token_suffix], dim=1)  # Concatenate the context and suffix to form the final prompts
 
+class ClassPromptLearner(nn.Module):
+    '''
+        This class is used to learn the context vectors for the specific task.
+    '''
+    def __init__(self, n_ctx, classnames, text_model, tokenizer, verbose=False):
+        super().__init__()
+        n_task = len(classnames)
+        dtype = text_model.get_token_embedding_layer().weight.dtype  # Get the dtype from the text model
+        ctx_dim = text_model.width
+        
+         # Generate n_ctx context vectors for the each task
+        ctx_vectors = torch.empty(n_task, n_ctx, ctx_dim, dtype=dtype)
+        nn.init.normal_(ctx_vectors, std=0.02)
+
+        prompt_prefix = " " + " ".join(["X"] * n_ctx) # Generate the prompt placeholders for the tokenizer
+
+        if verbose:
+            print(f'Initial context: "{prompt_prefix}"')
+            print(f"Number of context words (tokens): {n_ctx}")
+
+        if n_ctx == 0:
+            self.register_buffer("ctx", ctx_vectors)  # not optimized
+        else:
+            self.register_parameter("ctx", nn.Parameter(ctx_vectors))  # to be optimized
+
+        classnames = [name.replace("_", " ") for name in classnames]          # Replace underscores with spaces in task names
+        prompts = [prompt_prefix + " " + name + "." for name in classnames]  # Concatenate the placeholders with the task names
+
+        tokenized_prompts = torch.cat([tokenizer(p) for p in prompts])      # Tokenize the prompts using the tokenizer for all the tasks
+        with torch.no_grad():
+            embedding = text_model.get_token_embedding_layer()(tokenized_prompts).type(dtype) # Compute the embeddings for the tokenized prompts using the text model
+
+
+        # NOTE: it allows to access token_prefix and token_suffix by self.token_prefix and self.token_suffix in a static way
+        if tokenizer.has_sos_token():
+            self.register_buffer("token_prefix", embedding[:, :1, :])          # SOS
+            self.register_buffer("token_suffix", embedding[:, 1 + n_ctx:, :])  # CLS, EOS
+        else:
+            self.register_buffer("token_suffix", embedding[:, n_ctx:, :])
+
+
+        self.n_task = n_task
+        self.n_ctx = n_ctx
+        self.tokenized_prompts = tokenized_prompts # Contains the tokenized prompts for all the tasks with the relative context placeholders
+
+    def forward(self):
+        '''
+            It does not take any input, because all the information is stored in the class attributes.
+            It returns the prompts for the task, which are computed using the context vectors and the task names used to initialize the class.
+            The output is a tensor of shape (n_task, n_ctx + n_task_token, dim)
+        '''
+        ctx = self.ctx
+        if ctx.dim() == 2:
+            ctx = ctx.unsqueeze(0).expand(self.n_task, -1, -1)
+        if hasattr(self, "token_prefix"):
+            prefix = self.token_prefix
+            suffix = self.token_suffix # NOTE: The suffix contain the embeddings for the task and the EOS tokens
+        
+            prompts = torch.cat([prefix, ctx, suffix], dim=1)  # Concatenate the prefix, context and suffix to form the final prompts
+
+            return prompts        
+        
+        return torch.cat([ctx, self.token_suffix], dim=1)  # Concatenate the context and suffix to form the final prompts
 
 class PromptGen(nn.Module):
     """
     prompt generator, Used to generate the context using the MetaNeta described in the paper
     """
 
-    def __init__(self, gen_type, n_ctx, feat_dim, out_dim, dtype):
+    def __init__(self, gen_type, n_ctx, feat_dim, out_dim, cls_spc, dtype):
         super().__init__()
 
         self.dtype = dtype
         self.n_ctx = n_ctx
         self.out_dim = out_dim
+        self.cls_spc = cls_spc
         self.prompt_gen_type = gen_type
 
         if self.prompt_gen_type == "lin":
-            width = feat_dim
+            width = feat_dim * 2 if self.cls_spc else feat_dim
             self.register_parameter("proj", nn.Parameter(torch.zeros(width, n_ctx * out_dim))) # Matrix to project the features to the context dimension
             nn.init.normal_(self.proj, std=0.02)
         elif self.prompt_gen_type == "mlp":
@@ -218,11 +282,17 @@ class CustomModel(nn.Module):
         - dtype: the data type of the model (e.g. torch.float32)
 
     '''
-    def __init__(self, n_ctx, tasknames, classnames, model, tokenizer):
+    def __init__(self, n_ctx, tasknames, classnames, model, tokenizer, cls_spc=True):
         super().__init__()        
         self.prompt_learner = nn.ModuleList([PromptLearner(n_ctx, c, model.text_model, tokenizer) for c in classnames])
         self.task_prompt_learner = TaskPromptLearner(n_ctx, tasknames, model.text_model, tokenizer)
         self.task_tokenized_prompts = self.task_prompt_learner.tokenized_prompts
+        
+        self.cls_spc = cls_spc
+        # CLASS SPECIFIC TRAINING
+        if cls_spc:
+            self.class_prompt_learner = ClassPromptLearner(n_ctx, classnames, model.text_model, tokenizer)
+            self.class_tokenized_prompts = self.class_prompt_learner.tokenized_prompts
 
         self.model = model    
         self.image_encoder = model.visual if hasattr(model, "visual") else model.vision_model
@@ -241,6 +311,7 @@ class CustomModel(nn.Module):
             self.n_ctx,
             self.task_feat_dim,
             self.ctx_dim,
+            cls_spc,
             self.dtype
         )
 
@@ -293,8 +364,22 @@ class CustomModel(nn.Module):
         # TODO: check on the git implemetation the use of task_tokenized_prompts
         task_features = self.text_model.prompt_forward(prompts, task_tokenized_prompts)  # Compute the task features using the text encoder and the tokenized prompts
 
-        
-        ctx = self.prompt_gen(task_features.type(self.dtype))                # Generate the context to be concatenated with the class embeddings
+        if self.cls_spc:
+            prompts = self.class_prompt_learner()
+            class_tokenized_prompts = self.class_tokenized_prompts
+            class_features = self.text_model.prompt_forward(prompts, class_tokenized_prompts)
+            
+            cc = 0
+            features = []
+            for i, num in enumerate(self.num_classes):
+                features.append(torch.cat([class_features[cc:cc + num], task_features[[i], :].repeat(num, 1)], dim=1))
+                cc += num
+            features = torch.cat(features, dim=0)
+
+            ctx = self.prompt_gen(features.type(self.dtype))
+            ctx = torch.split(ctx, self.num_classes, dim=0)
+        else:
+            ctx = self.prompt_gen(task_features.type(self.dtype))
 
         image_features = self.image_encoder(image.type(self.dtype))
 
@@ -328,12 +413,25 @@ class CustomModel(nn.Module):
         prompts = self.task_prompt_learner()                                # Create the prompt for the task using the task prompt learner
         task_tokenized_prompts = self.task_tokenized_prompts                # Get the tokenized prompts for the task
 
-        # DONE: check on the git implemetation the use of task_tokenized_prompts
-        # task tokenized prompts are the token computed over the task name and the context placeholders
+        # TODO: check on the git implemetation the use of task_tokenized_prompts
         task_features = self.text_model.prompt_forward(prompts, task_tokenized_prompts)  # Compute the task features using the text encoder and the tokenized prompts
 
-        
-        ctx = self.prompt_gen(task_features.type(self.dtype))                # Generate the context to be concatenated with the class embeddings
+        if self.cls_spc:
+            prompts = self.class_prompt_learner()
+            class_tokenized_prompts = self.class_tokenized_prompts
+            class_features = self.text_model.prompt_forward(prompts, class_tokenized_prompts)
+            
+            cc = 0
+            features = []
+            for i, num in enumerate(self.num_classes):
+                features.append(torch.cat([class_features[cc:cc + num], task_features[[i], :].repeat(num, 1)], dim=1))
+                cc += num
+            features = torch.cat(features, dim=0)
+
+            ctx = self.prompt_gen(features.type(self.dtype))
+            ctx = torch.split(ctx, self.num_classes, dim=0)
+        else:
+            ctx = self.prompt_gen(task_features.type(self.dtype))
 
         text_features = self._compute_text_features_full(ctx)                # Compute the text features for all the classes using the context generated by the prompt generator
         if normalize:
