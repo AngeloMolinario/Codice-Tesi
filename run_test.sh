@@ -15,6 +15,8 @@ PALIGEMMA="" # set to "--paligemma" to enable
 
 # Build list of valid dataset paths
 DATASET_PATHS=()
+# Build list of valid dataset paths
+DATASET_PATHS=()
 for DATASET in "${DATASETS[@]}"; do
   DATASET_PATH="${BASE_DATASET_PATH}/${DATASET}"
   if [ -d "$DATASET_PATH" ]; then
@@ -42,5 +44,31 @@ python3 test.py \
   --num_prompt ${NUM_PROMPT} \
   --ckpt_dir "${CKPT_DIR}" \
   ${PALIGEMMA}
+  if [ -d "$DATASET_PATH" ]; then
+    DATASET_PATHS+=("$DATASET_PATH")
+  else
+    echo "Warning: Dataset path '$DATASET_PATH' does not exist. Skipping."
+  fi
+done
 
+if [ ${#DATASET_PATHS[@]} -eq 0 ]; then
+  echo "Error: no valid dataset paths found. Exiting."
+  exit 1
+fi
+
+echo "Running a single test invocation over ${#DATASET_PATHS[@]} datasets..."
+
+# Execute a single command with multiple datasets; the Python script
+# will create one output subfolder per dataset under BASE_OUTPUT_PATH
+python3 test.py \
+  --model_type "${MODEL_TYPE}" \
+  --dataset_paths "${DATASET_PATHS[@]}" \
+  --batch_size ${BATCH_SIZE} \
+  --output_base_path "${BASE_OUTPUT_PATH}" \
+  ${USE_TQDM} \
+  --num_prompt ${NUM_PROMPT} \
+  --ckpt_dir "${CKPT_DIR}" \
+  ${PALIGEMMA}
+
+exit $?
 exit $?

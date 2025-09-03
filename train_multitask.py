@@ -307,6 +307,8 @@ def main():
     # Save the vision model right after loading
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
     model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
+    os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
+    model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
 
     #############################################################################################
     ##                         Dataset and Dataloade building                                  ##
