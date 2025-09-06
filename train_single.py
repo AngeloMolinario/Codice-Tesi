@@ -37,7 +37,12 @@ def get_loss_fn(config, weights=None):
     if weights is None:
         weights = torch.ones(len(config.CLASSES[task]))
     if task == 0:
-        return OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights, lambda_ordinal=config.EMD_WEIGHT)
+        return OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]),
+                                class_frequencies=weights,
+                                lambda_ordinal=config.EMD_WEIGHT,
+                                omega=config.EMD_OMEGA,
+                                mu = config.EMD_MU
+                                )
     elif task == 1:
         return CrossEntropyLoss(num_classes=len(config.CLASSES[1]), weights=weights)
     elif task == 2:
@@ -239,7 +244,9 @@ def main():
     model = get_model(config).to(DEVICE)
 
     # Save the vision model right after loading
-    model.save_vision_model(config.OUTPUT_DIR, filename="vision_ckpt.pt")
+    os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
+    model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
+
 
     print(f"MODEL LOGIT SCALE {model.logit_scale}")
 
@@ -253,17 +260,7 @@ def main():
                                  transform=get_image_transform(config))
 
     # Create dataloader for training and validation
-    train_loader = DataLoader(
-        dataset=training_set,
-        batch_size=config.BATCH_SIZE,
-        shuffle=True,
-        num_workers=config.NUM_WORKERS,
-        pin_memory=True,
-        pin_memory_device="cuda",
-        persistent_workers=True,
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
-    )
+ 
     val_loader = DataLoader(
         dataset=validation_set,
         batch_size=config.BATCH_SIZE,
@@ -276,7 +273,22 @@ def main():
     )
 
     # Get the loss function
-    weights = training_set.get_class_weights(config.TASK, 'normalized_inverse_sqrt').to(DEVICE)
+    weights = training_set.get_class_weights(config.TASK, 'default').to(DEVICE)
+
+
+
+    train_loader = DataLoader(
+        dataset=training_set,
+        batch_size=config.BATCH_SIZE,
+        shuffle=True,
+        num_workers=config.NUM_WORKERS,
+        pin_memory=True,
+        pin_memory_device="cuda",
+        persistent_workers=True,
+        drop_last=True,
+        prefetch_factor=config.PREFETCH_FACTOR
+    )
+
     loss_fn = get_loss_fn(config, weights=weights)
 
     # Create optimizer

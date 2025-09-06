@@ -317,8 +317,6 @@ def main():
     # Save the vision model right after loading
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
     model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
-    os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
-    model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
 
     #############################################################################################
     ##                         Dataset and Dataloade building                                  ##
@@ -327,7 +325,7 @@ def main():
     training_set =  get_dataset(config=config,
                                split="train",
                                transform=get_image_transform(config),
-                               augmentation_transform=None#get_augmentation_transform(config)
+                               augmentation_transform=get_augmentation_transform(config)
                                )
     validation_set = get_dataset(config=config,
                                  split="val",
@@ -465,7 +463,7 @@ def main():
     epochs_without_improvement = 0
     best_accuracy = 0.0
 
-    # TRAINING LOOP
+    # TRAINING LOOPF
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
     train_fn = multitask_train_fn
     val_fn   = multitask_val_fn
