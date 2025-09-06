@@ -17,12 +17,12 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB", "MiviaGender", "CelebA_HQ", "AffectNet"],
+        "-1" : ["FairFace", "RAF-DB", "MiviaGender", "CelebA_HQ"],
         "0"  : ["FairFace"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },
-    "CSP": true,   
+    "CSP": false,   
     "EMD_WEIGHT" : 200,
     "EMD_OMEGA" : 2.0,
     "EMD_MU": -0.0025,
@@ -31,11 +31,11 @@
     "BATCH_SIZE" : 256,
     "NUM_WORKERS" : 4,
     "LR" : 0.002,
-    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/00000001_vgg",
+    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/00000001_class_agnostic",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
     "USE_TQDM": false,
-    "EPOCHS" : 50,
+    "EPOCHS" : 100,
     "PATIENCE" : 15
 
 }

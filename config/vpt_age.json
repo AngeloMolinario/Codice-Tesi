@@ -3,7 +3,7 @@
     "MODEL"  : "Siglip2",
     "TASK"   : 0,
 
-    "NUM_VISUAL_PROMPT" : 10,
+    "NUM_VISUAL_PROMPT" : 30,
     "NUM_TEXT_CNTX" : 0,
     "TASK_NAMES": ["age estimation from facial features", "gender recognition from facial features", "emotion classification from facial expression"],
     "CLASSES": [
@@ -18,7 +18,7 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB", "MiviaGender", "AffectNet", "CelebA_HQ"],
+        "-1" : ["FairFace", "RAF-DB", "MiviaGender", "CelebA_HQ"],
         "0"  : ["FairFace"],   
         "1"  : ["RAF-DB", "RAF-DB", "MiviaGender"],
         "2"  : ["RAF-DB"]

@@ -215,7 +215,7 @@ class PECore_Vision(nn.Module):
         if 'prompt_learner' in checkpoint:
             # Inizializza un'istanza di VisionPromptLearner
             vpt = VisionPromptLearner(
-                emb_size=self.visual.embed_dim,
+                emb_size=self.visual.width,
                 num_prompt=self.num_prompt,
                 is_cls_present=False
             )
