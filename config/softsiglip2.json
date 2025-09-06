@@ -4,7 +4,7 @@
     "TASK"   : -1,
 
     "NUM_VISUAL_PROMPT" : 0,
-    "NUM_TEXT_CNTX" : 24,
+    "NUM_TEXT_CNTX" : 48,
     "TASK_NAMES": ["age estimation from face picture", "gender recognition from facial features", "emotion classification from facial expression"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
@@ -24,16 +24,16 @@
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
-    "CSP": true,
+    "CSP": false,
     "EMD_WEIGHT" : 200,
     "EMD_OMEGA" : 2.0,
     "EMD_MU": -0.0025,
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 256,
+    "BATCH_SIZE" : 512,
     "NUM_WORKERS" : 4,
     "LR" : 0.002,
-    "OUTPUT_DIR" : "../TRAIN/Siglip2/SoftCPT/TSCS",
+    "OUTPUT_DIR" : "../TRAIN/Siglip2/SoftCPT/TSCA_augment",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
     "USE_TQDM": false,
