@@ -316,8 +316,8 @@ def _discover_in_ckpt_dir(ckpt_dir: str):
     # Text features inside ckpt dir
     text_feats = None
     # Prefer only best-accuracy text features
-    bacc_path = os.path.join(ckpt_dir, "text_features_bacc.pt")
-    #bacc_path = os.path.join(ckpt_dir, "text_features_bval.pt")
+    #bacc_path = os.path.join(ckpt_dir, "text_features_bacc.pt")
+    bacc_path = os.path.join(ckpt_dir, "text_features_bval.pt")
     if not os.path.exists(bacc_path):
         bacc_path = os.path.join(ckpt_dir, "text_features.pt")
     if os.path.isfile(bacc_path):
