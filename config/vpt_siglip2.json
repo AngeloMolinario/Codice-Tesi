@@ -5,7 +5,7 @@
 
     "NUM_VISUAL_PROMPT" : 30,
     "NUM_TEXT_CNTX" : 0,
-    "TASK_NAMES": ["age estimation from facial features", "gender recognition from facial features", "emotion classification from facial expression"],
+    "TASK_NAMES": ["age estimation from face picture", "gender recognition from facial features", "emotion classification from facial expression"],
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
         ["male", "female"],
@@ -20,8 +20,8 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB", "MiviaGender", "CelebA_HQ"],
-        "0"  : ["FairFace" , "VggFace2"],   
+        "-1" : ["FairFace", "RAF-DB", "MiviaGender", "CelebA_HQ", "Lagenda"],
+        "0"  : ["FairFace"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },    
@@ -30,13 +30,13 @@
     "EMD_MU": -0.0005,
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 100,
+    "BATCH_SIZE" : 128,
     "NUM_WORKERS" : 3,
-    "LR" : 0.002,
-    "OUTPUT_DIR" : "../TRAIN/Siglip2/VPT/text_features_TSCA_batch100_mean1task",
+    "LR" : 0.0002,
+    "OUTPUT_DIR" : "../TRAIN/Siglip2/VPT/text_features_TSCA_Lagenda",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
     "USE_TQDM": false,
-    "EPOCHS" : 150,
+    "EPOCHS" : 100,
     "PATIENCE" : 15
 }

@@ -310,7 +310,7 @@ def _discover_in_ckpt_dir(ckpt_dir: str):
     vpt_tokens = []
     if os.path.isdir(ckpt_dir):
         for fn in sorted(os.listdir(ckpt_dir)):
-            if fn.startswith("vpt_token") and fn.endswith(".pt") and "bacc" in fn:
+            if fn.startswith("vpt_token") and fn.endswith(".pt") and "bval" in fn:
                 vpt_tokens.append(os.path.join(ckpt_dir, fn))
 
     # Text features inside ckpt dir

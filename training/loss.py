@@ -137,7 +137,6 @@ class OrdinalAgeLossEMD(nn.Module):
         self.softmax = nn.Softmax(dim=1)
         self.factor = math.log(num_classes)
 
-        # ---- COSTRUISCI D (statica) ----
         self.register_buffer("D", self._build_D_from_age_bins(
             age_bins=age_bins, plus_cap=plus_cap, normalize=normalize_D
         ))  # shape [C, C]
@@ -154,12 +153,6 @@ class OrdinalAgeLossEMD(nn.Module):
         return lo, hi
 
     def _build_D_from_age_bins(self, age_bins, plus_cap=90, normalize=True):
-        """
-        Costruisce D come distanza tra i mid-point degli intervalli (1D embedding ordinato).
-        D_{i,j} = | m_i - m_j |, con m_i midpoint dell'intervallo i.
-        Opzionalmente normalizza dividendo per max(D) per avere scala in [0,1].
-        """
-        assert len(age_bins) == self.num_classes, "num_classes e numero di bin devono coincidere"
         mids = []
         for s in age_bins:
             lo, hi = self._parse_age_bin(s, plus_cap)
@@ -181,9 +174,7 @@ class OrdinalAgeLossEMD(nn.Module):
         targets: (B,)
         return: scalare medio sul batch
         """
-        B, C = probs.shape
-        # D_col[b, i] = D_{i, k_b}
-        # Prendiamo per ogni elemento del batch la colonna della D corrispondente al target
+        
         Ddevice = self.D.to(probs.device)
         D_cols = Ddevice.index_select(dim=1, index=targets)          # [C, B]
         D_cols = D_cols.transpose(0, 1)                               # [B, C]

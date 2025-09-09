@@ -128,6 +128,15 @@ class Siglip2Model(SiglipPreTrainedModel):
         torch.save(out_sd, save_path)
         print(f"[Siglip2Model] Vision model saved (vision_model.* + logit_scale[/bias]) to {save_path}")
 
+    def save_logit(self, save_path, filename="logits.pt"):
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        state_dict = {
+            'logit_scale' : self.logit_scale,
+            'logit_bias' : self.logit_bias
+        }
+        torch.save(state_dict, os.path.join(save_path, filename))
+        print(f"Logit scale and bias saved in {os.path.join(save_path, filename)}")
+
     def save_vpt_token(self, save_path):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         if hasattr(self.vision_model, 'prompt_learner') and self.vision_model.prompt_learner is not None:

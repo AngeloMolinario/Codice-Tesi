@@ -11,7 +11,6 @@ from torchvision import transforms as T
 from torch.amp import autocast, GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 import numpy
@@ -490,7 +489,6 @@ def main():
 
 
     data_task_weight = training_set.get_task_weights()
-    print(f"Task weights: {data_task_weight}")
 
     tracker = MultitaskTracker(
         num_tasks=num_tasks,
@@ -600,24 +598,34 @@ def main():
         tracker.plot_accuracy()
         tracker.save()        
         if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
-            model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
             if val_loss[-1] < best_val_loss:
                 best_val_loss = val_loss[-1]
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
 
                 if config.TUNING.lower() == 'softcpt':                
                     torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bval.pt"))
+                    # If the logit_scale and bias need to be optmized than we save them
+                    if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
+                        model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
                 else:
                     model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bval.pt"))
+                    if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
+                        model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
 
             if sum(val_acc)/num_tasks > best_accuracy:
                 best_accuracy = sum(val_acc)/num_tasks
                 print(f"New best validation accuracy: {best_accuracy:.4f}. Saving model...")
             
-            if config.TUNING.lower() == 'softcpt':                
-                torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bacc.pt"))
-            else:
-                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bacc.pt"))
+                if config.TUNING.lower() == 'softcpt':                
+                    torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bacc.pt"))
+                    if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
+                        model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bacc.pt")
+
+                else:
+                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bacc.pt"))
+                    if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
+                        model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bacc.pt")
+
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1

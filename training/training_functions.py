@@ -290,7 +290,7 @@ def analyze_age_errors(all_preds_list, all_labels_list, all_probs_list, class_na
             plt.xticks(rotation=45)
             plt.xlabel("Classi")
             plt.ylabel("Frazione di campioni (normalizzata)")
-            plt.title(f"Distribuzione di probabilitÃ  normalizzata - {class_names[c]}")
+            plt.title(f"Distribuzione di probabilità normalizzata - {class_names[c]}")
             _annotate_bars_and_fix_ylim(ax, bars)
             plt.tight_layout()
             plt.savefig(os.path.join(prob_dir, f"class_{c}_{class_names[c]}.png"))

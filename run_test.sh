@@ -1,17 +1,9 @@
 #!/bin/bash
 
-# Script to run the test.py script with specific parameters
-
 # Define default values
-MODEL_TYPE="Siglip2SoftCPT"
-DATASETS=("FairFace" "UTKFace" "RAF-DB" "LFW" "CelebA_HQ" "AffectNet" "VggFace2-Test")  # List of datasets
-BATCH_SIZE=128
+DATASETS=("UTKFace" "FairFace" "RAF-DB" "LFW" "CelebA_HQ" "VggFace2-Test")  # List of datasets to test
+BATCH_SIZE=256
 BASE_DATASET_PATH="../processed_datasets/datasets_with_standard_labels"
-BASE_OUTPUT_PATH="../TEST/Siglip2/SoftCPT/00000001_class_specific"
-NUM_PROMPT=0
-CKPT_DIR="../TRAIN/Siglip2/SoftCPT/00000001_class_specific/ckpt"
-USE_TQDM="" # set to "--no_tqdm" to disable
-PALIGEMMA="" # set to "--paligemma" to enable
 
 # Build list of valid dataset paths
 DATASET_PATHS=()
@@ -31,63 +23,22 @@ fi
 
 echo "Running a single test invocation over ${#DATASET_PATHS[@]} datasets..."
 
-# Execute a single command with multiple datasets; the Python script
-# will create one output subfolder per dataset under BASE_OUTPUT_PATH../TRAIN/PECore/VPT/text_features_TSCA/ck
-echo "Testing SoftSiglip2_TSCA_augment"
+echo "Testing PECORE VPT_TSCA_augment_batch100"
 python3 test.py \
-  --model_type "Siglip2SoftCPT" \
+  --model_type "PECoreVPT" \
   --dataset_paths "${DATASET_PATHS[@]}" \
   --batch_size ${BATCH_SIZE} \
-  --output_base_path "../TEST/Siglip2/SoftCPT/TSCA_augment" \
-  --num_prompt 0 \
-  --ckpt_dir "../TRAIN/Siglip2/SoftCPT/TSCA_augment/ckpt" 
+  --output_base_path "../TEST/PECore/VPT/text_features_TSCA_batch100" \
+  --num_prompt 70 \
+  --ckpt_dir "../TRAIN/PECore/VPT/text_features_TSCA_batch100/ckpt" 
 
-echo "Testing SoftSiglip2_TSCA"
+echo "Testing Siglip2 VPT_TSCA_augment_batch100"
 python3 test.py \
-  --model_type "Siglip2SoftCPT" \
+  --model_type "Siglip2VPT" \
   --dataset_paths "${DATASET_PATHS[@]}" \
   --batch_size ${BATCH_SIZE} \
-  --output_base_path "../TEST/Siglip2/SoftCPT/TSCA" \
-  --num_prompt 0 \
-  --ckpt_dir "../TRAIN/Siglip2/SoftCPT/TSCA/ckpt" 
-
-echo "Testing SoftSiglip2_TSCS"
-python3 test.py \
-  --model_type "Siglip2SoftCPT" \
-  --dataset_paths "${DATASET_PATHS[@]}" \
-  --batch_size ${BATCH_SIZE} \
-  --output_base_path "../TEST/Siglip2/SoftCPT/TSCS" \
-  --num_prompt 0 \
-  --ckpt_dir "../TRAIN/Siglip2/SoftCPT/TSCS/ckpt" 
-
-
-echo "Testing SoftPECore_TSCA_augment"
-python3 test.py \
-  --model_type "PECoreSoftCPT" \
-  --dataset_paths "${DATASET_PATHS[@]}" \
-  --batch_size ${BATCH_SIZE} \
-  --output_base_path "../TEST/PECore/SoftCPT/TSCA_augment" \
-  --num_prompt 0 \
-  --ckpt_dir "../TRAIN/PECore/SoftCPT/TSCA_augment/ckpt" 
-
-echo "Testing SoftPECore_TSCA"
-python3 test.py \
-  --model_type "PECoreSoftCPT" \
-  --dataset_paths "${DATASET_PATHS[@]}" \
-  --batch_size ${BATCH_SIZE} \
-  --output_base_path "../TEST/PECore/SoftCPT/TSCA" \
-  --num_prompt 0 \
-  --ckpt_dir "../TRAIN/PECore/SoftCPT/TSCA/ckpt" 
-
-echo "Testing SoftPECore_TSCS"
-python3 test.py \
-  --model_type "PECoreSoftCPT" \
-  --dataset_paths "${DATASET_PATHS[@]}" \
-  --batch_size ${BATCH_SIZE} \
-  --output_base_path "../TEST/PECore/SoftCPT/TSCS" \
-  --num_prompt 0 \
-  --ckpt_dir "../TRAIN/PECore/SoftCPT/TSCS/ckpt" 
-
-
+  --output_base_path "../TEST/Siglip2/VPT/text_features_TSCA_batch100" \
+  --num_prompt 70 \
+  --ckpt_dir "../TRAIN/Siglip2/VPT/text_features_TSCA_batch100/ckpt"
 
 exit $?

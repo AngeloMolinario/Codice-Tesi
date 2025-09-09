@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+import os
 from core.vision_encoder import tokenizer
 import itertools
 
@@ -322,6 +323,20 @@ class CustomModel(nn.Module):
         Returns the parameters of the prompt learner and the task prompt learner.
         """
         return list(self.prompt_learner.parameters()) + list(self.task_prompt_learner.parameters()) + list(self.prompt_gen.parameters())
+
+    def save_logit(self, output_dir, filename="logits.pt"):
+        """
+        Save the logit scale and bias to a file.
+        """
+        out_sd = {}
+        if hasattr(self, "logit_scale"):
+            out_sd["logit_scale"] = (self.logit_scale.detach().cpu() if hasattr(self.logit_scale, 'detach') else self.logit_scale)
+        if hasattr(self, "logit_bias"):
+            out_sd["logit_bias"] = (self.logit_bias.detach().cpu() if hasattr(self.logit_bias, 'detach') else self.logit_bias)
+
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[CustomModel] logit_scale[/bias]) to {save_path}")
 
     def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
         """

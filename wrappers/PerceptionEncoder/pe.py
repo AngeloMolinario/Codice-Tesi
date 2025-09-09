@@ -52,6 +52,18 @@ class PECore(nn.Module):
             self.get_text_features(text, normalize=True) if text is not None else None
         )
         return image_features, text_features, self.logit_scale.exp()
+    
+    
+    def save_logit(self, output_dir: str, filename: str = "logits.pt"):
+        """
+        Save logit_scale and logit_bias (if present) to a checkpoint.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        out_sd = {}
+        out_sd["logit_scale"] = self.logit_scale.detach().cpu()
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[PECore] Logit parameters saved (logit_scale) to {save_path}")
 
     def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
         """
