@@ -34,7 +34,6 @@
     "NUM_WORKERS" : 4,
     "LR" : 0.0002,
     "OUTPUT_DIR" : "../TRAIN/PECore/B16/CoOp/Emotion",
-    "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
     "USE_TQDM": true,
     "EPOCHS" : 10,

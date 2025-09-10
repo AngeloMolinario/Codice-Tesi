@@ -339,9 +339,7 @@ def main():
         num_workers=config.NUM_WORKERS,
         pin_memory_device="cuda",
         persistent_workers=True,
-        pin_memory=(DEVICE == 'cuda'),
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
+        pin_memory=(DEVICE == 'cuda')
     )
 
     #############################################################################################
@@ -377,8 +375,6 @@ def main():
         pin_memory=(DEVICE == 'cuda'),
         pin_memory_device="cuda",
         persistent_workers=True,
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
     )
 
     print("#"*50)

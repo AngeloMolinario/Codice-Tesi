@@ -88,10 +88,7 @@ def single_task_train_fn(model, dataloader, optimizer, loss_fn, device, config, 
             image_features = model.get_image_features(image, normalize=True)
             if text_features is None:                
                 computed_text_features = model.get_text_features(normalize=True).T
-                print(f"Computing text features on-the-fly for {config.TASK_NAMES[config.TASK]} with context tokens {config.NUM_TEXT_CNTX}")
-                print(f"Text features shape {computed_text_features.shape}")
 
-                
             logits =  scale * (image_features @ computed_text_features) + bias
             loss = loss_fn(logits, labels)
             pred = logits.argmax(dim=1)
@@ -127,7 +124,7 @@ def single_task_train_fn(model, dataloader, optimizer, loss_fn, device, config, 
 
 def single_task_val_fn(model, dataloader, loss_fn, device, config, text_features=None):
     model.eval()
-    compute_text_features = text_features is None or config.NUM_TEXT_CNTX > 0
+    compute_text_features = text_features is None
 
     iterator = tqdm(dataloader) if config.USE_TQDM else dataloader
 
@@ -150,7 +147,7 @@ def single_task_val_fn(model, dataloader, loss_fn, device, config, text_features
             labels = label[:, config.TASK].to(device, non_blocking=True)
 
             if compute_text_features:
-                text_features = model.get_text_features(normalize=True)
+                text_features = model.get_text_features(normalize=True).T
 
 
             scale = 1.0
@@ -261,11 +258,11 @@ def main():
     # Get the training and validation dataset
     training_set = get_dataset(config=config,
                                split="train",
-                               transform=get_image_transform(config),
+                               transform=get_image_transform(config, model.image_size),
                                augmentation_transform=None)
     validation_set = get_dataset(config=config,
                                  split="val",
-                                 transform=get_image_transform(config))
+                                 transform=get_image_transform(config, model.image_size),)
 
     # Create dataloader for training and validation
  
@@ -275,9 +272,7 @@ def main():
         shuffle=False,
         num_workers=config.NUM_WORKERS,
         pin_memory_device="cuda",
-        pin_memory=True,
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
+        pin_memory=True
     )
 
     # Get the loss function
@@ -292,9 +287,7 @@ def main():
         num_workers=config.NUM_WORKERS,
         pin_memory=True,
         pin_memory_device="cuda",
-        persistent_workers=True,
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
+        persistent_workers=True
     )
 
     loss_fn = get_loss_fn(config, weights=weights)
@@ -317,6 +310,23 @@ def main():
     # CosineAnnealingLR scheduler
     scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
     lr_history = [optimizer.param_groups[0]['lr']]
+    ''' ---------------------- TO REMOVE ONLY FOR DEBUGGING PURPOSES -------------------------'''
+
+    param_to_name = {p: n for n, p in model.named_parameters()}
+
+    # Itera sui param_groups dell'optimizer
+    for group_idx, group in enumerate(optimizer.param_groups):
+        print(f"\nParam group {group_idx}: lr={group['lr']}, weight_decay={group.get('weight_decay', 0)}")
+        total_params_group = 0
+        for p in group['params']:
+            name = param_to_name.get(p, "<unknown>")
+            numel = p.numel()
+            total_params_group += numel
+            print(f"  {name}: shape={tuple(p.shape)}, numel={numel}")
+        print(f"  → Totale parametri in questo gruppo: {total_params_group}")
+
+    ''' -------------------------------  TO HERE --------------------------------------------'''
+
 
     print(f"\nLoaded Model: {type(model)}")
     print(f"\nTraining set {type(training_set)} of size: {len(training_set)}")
@@ -349,14 +359,17 @@ def main():
     train_fn = single_task_train_fn
     val_fn = single_task_val_fn
 
-    
-    text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
-    model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
-    print(f"Text features loaded shape: {text_features.shape}")
-    torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
+    if config.TUNING == "coop":
+        text_features = None
+    else:
+        text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
+        torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
 
-    text_features = torch.split(text_features, (9,2,7))[config.TASK]
-    print(f"text_features task shape {text_features.shape}")
+        text_features = torch.split(text_features, (9,2,7))[config.TASK]
+        print(f"text_features task shape {text_features.shape}")
+
+    model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
+        
 
     for epoch in range(config.EPOCHS):
 
@@ -373,7 +386,7 @@ def main():
 
         ################## VALIDATION LOOP ##################
         print(f"\n[Epoch {epoch+1} - VAL]", flush=True)
-        val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, config, text_features)
+        val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, config, model.get_text_features(normalize=True) if text_features is None else text_features)
         print(f"  Task '{task_names[0]}': Loss = {val_loss[0]:.4f}, Accuracy = {val_acc[0]:.4f}")
         tracker.update_loss(0, val_loss[0], train=False)
         tracker.update_accuracy(0, val_acc[0], train=False)
@@ -412,12 +425,22 @@ def main():
             if val_loss[0] < best_val_loss:
                 best_val_loss = val_loss[0]
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving artifacts...")
-                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
+                if text_features is None:
+                    with torch.inference_mode():
+                        text_features_to_save = model.get_text_features(normalize=True)
+                        torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bval.pt"))
+                if config.NUM_VISUAL_PROMPT > 0:
+                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
 
             if val_acc[0] > best_accuracy:
                 best_accuracy = val_acc[0]
                 print(f"New best validation accuracy: {best_accuracy:.4f}. Saving artifacts...")
-                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bacc.pt"))
+                if text_features is None:
+                    with torch.inference_mode():
+                        text_features_to_save = model.get_text_features(normalize=True)
+                        torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bacc.pt"))
+                if config.NUM_VISUAL_PROMPT > 0:
+                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bacc.pt"))
 
             epochs_without_improvement = 0            
         else:
