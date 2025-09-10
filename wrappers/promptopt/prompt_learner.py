@@ -601,3 +601,8 @@ class CoopModel(nn.Module):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         torch.save(self.state_dict(), save_path)
         print(f"[CoopCustomModel] Modello completo salvato per training in: {save_path}")
+    def save_vpt_token(self, save_path):
+        """
+        Salva i token del prompt learner per poterli riutilizzare in futuro.
+        """
+        self.model.save_vpt_token(save_path)

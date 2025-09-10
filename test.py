@@ -284,7 +284,7 @@ def save_confusion_matrices_as_images(confusion_matrices, class_names_per_task, 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters())
 
-def _discover_in_ckpt_dir(ckpt_dir: str):
+def _discover_in_ckpt_dir(ckpt_dir: str, save_: str = "bacc"):
     """
     From a single ckpt directory, discover useful artifacts:
     - vision checkpoint (prefer vision_ckpt.pt in ckpt_dir, else parent dir)
@@ -310,14 +310,13 @@ def _discover_in_ckpt_dir(ckpt_dir: str):
     vpt_tokens = []
     if os.path.isdir(ckpt_dir):
         for fn in sorted(os.listdir(ckpt_dir)):
-            if fn.startswith("vpt_token") and fn.endswith(".pt") and "bval" in fn:
+            if fn.startswith("vpt_token") and fn.endswith(".pt") and save_ in fn:
                 vpt_tokens.append(os.path.join(ckpt_dir, fn))
 
     # Text features inside ckpt dir
     text_feats = None
     # Prefer only best-accuracy text features
-    #bacc_path = os.path.join(ckpt_dir, "text_features_bacc.pt")
-    bacc_path = os.path.join(ckpt_dir, "text_features_bval.pt")
+    bacc_path = os.path.join(ckpt_dir, f"text_features_{save_}.pt")
     if not os.path.exists(bacc_path):
         bacc_path = os.path.join(ckpt_dir, "text_features.pt")
     if os.path.isfile(bacc_path):
@@ -347,38 +346,38 @@ def _load_text_features_if_any(model, tokenizer, text_ckpt_path, device):
             exit(0)
         else:
             raise RuntimeError("No text features provided and model has no text_model to build them.")
-
+    print("Loaded text features with shape:", text_features.shape)
     return text_features
 
 
-def load_model(model_type, num_prompt, ckpt_dir, device):
+def load_model(model_type, num_prompt, ckpt_dir, device, siglip2_repo_id="google/siglip2-base-patch16-224", pe_vision_config="PE-Core-L14-336", loaded_type="bacc"):
     # Discover artifacts from ckpt_dir
-    vision_ckpt, vpt_tokens, text_feats_path = _discover_in_ckpt_dir(ckpt_dir)
+    vision_ckpt, vpt_tokens, text_feats_path = _discover_in_ckpt_dir(ckpt_dir, save_=loaded_type)
     
     if model_type == 'PECoreBase':
         model = PECore_Vision(
-            vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
+            vision_cfg=PE_VISION_CONFIG[pe_vision_config],
             num_prompt=num_prompt
         )
         model.load_baseline(vision_ckpt, device)
-        return model, get_image_transform(224), PETokenizer(32), text_feats_path
+        return model, get_image_transform(model.image_size), PETokenizer(32), text_feats_path
 
     elif model_type == 'Siglip2Base':
         model = Siglip2Vision(
-            AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+            AutoConfig.from_pretrained(siglip2_repo_id, cache_dir="./hf_models"),
             num_prompt=num_prompt
         )
         model.load_baseline(vision_ckpt, device)
         image_transforms = T.Compose([
-            T.Resize((224, 224)),
+            T.Resize((model.image_size, model.image_size)),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-        ])
+        ])  
         return model, image_transforms, SigLip2Tokenizer(64), text_feats_path
 
     elif model_type == 'PECoreVPT':
         model = PECore_Vision(
-            vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
+            vision_cfg=PE_VISION_CONFIG[pe_vision_config],
             num_prompt=num_prompt
         )
         model.load_baseline(vision_ckpt, device)
@@ -388,19 +387,19 @@ def load_model(model_type, num_prompt, ckpt_dir, device):
                 model.load_VPT_token(vpt_tokens[0], device)
             except Exception as e:
                 print(f"Warning: failed to load VPT token '{vpt_tokens[0]}': {e}")
-        return model, get_image_transform(224), PETokenizer(32), text_feats_path
+        return model, get_image_transform(model.image_size), PETokenizer(32), text_feats_path
 
     elif model_type == 'PECoreSoftCPT':
         model = PECore_Vision(
-            vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
+            vision_cfg=PE_VISION_CONFIG[pe_vision_config],
             num_prompt=0
         )
         model.load_baseline(vision_ckpt, device)
-        return model, get_image_transform(224), PETokenizer(32), text_feats_path
+        return model, get_image_transform(model.image_size), PETokenizer(32), text_feats_path
 
     elif model_type == 'PECoreVPT_single':
         model = PECore_Vision(
-            vision_cfg=PE_VISION_CONFIG["PE-Core-B16-224"],
+            vision_cfg=PE_VISION_CONFIG[pe_vision_config],
             num_prompt=num_prompt
         )
         model.load_baseline(vision_ckpt, device)
@@ -410,11 +409,11 @@ def load_model(model_type, num_prompt, ckpt_dir, device):
                 model.load_VPT_token(tok, device)
             except Exception as e:
                 print(f"Warning: failed to load VPT token '{tok}': {e}")
-        return model, get_image_transform(224), PETokenizer(32), text_feats_path
+        return model, get_image_transform(model.image_size), PETokenizer(32), text_feats_path
 
     elif model_type == 'Siglip2VPT':
         model = Siglip2Vision(
-            AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+            AutoConfig.from_pretrained(siglip2_repo_id, cache_dir="./hf_models"),
             num_prompt=num_prompt
         )
         model.load_baseline(vision_ckpt, device)
@@ -425,7 +424,7 @@ def load_model(model_type, num_prompt, ckpt_dir, device):
         except Exception as e:
             print(f"Warning: failed to load VPT token '{vpt_tokens[0]}': {e}")
         image_transforms = T.Compose([
-            T.Resize((224, 224)),
+            T.Resize((model.image_size, model.image_size)),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
@@ -433,7 +432,7 @@ def load_model(model_type, num_prompt, ckpt_dir, device):
 
     elif model_type == 'Siglip2VPT_single':
         model = Siglip2Vision(
-            AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+            AutoConfig.from_pretrained(siglip2_repo_id, cache_dir="./hf_models"),
             num_prompt=num_prompt
         )
         model.load_baseline(vision_ckpt, device)
@@ -443,7 +442,7 @@ def load_model(model_type, num_prompt, ckpt_dir, device):
             except Exception as e:
                 print(f"Warning: failed to load VPT token '{tok}': {e}")
         image_transforms = T.Compose([
-            T.Resize((224, 224)),
+            T.Resize((model.image_size, model.image_size)),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
@@ -451,12 +450,12 @@ def load_model(model_type, num_prompt, ckpt_dir, device):
 
     elif model_type == 'Siglip2SoftCPT':
         model = Siglip2Vision(
-            AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+            AutoConfig.from_pretrained(siglip2_repo_id, cache_dir="./hf_models"),
             num_prompt=0
         )
         model.load_baseline(vision_ckpt, device)
         image_transforms = T.Compose([
-            T.Resize((224, 224)),
+            T.Resize((model.image_size, model.image_size)),
             T.ToTensor(),
             T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
@@ -503,9 +502,12 @@ def validate(model, dataloader, device, use_tqdm):
             images = images.to(device)
             labels = labels.to(device)
 
-            logits = model.forward(images)  # atteso: list/tuple di 3 tensori [B, C_task]
+            logits = model.forward(images)  # atteso: list/tuple di 3 tensori [B, C_task] o None
 
             for task_idx, task_logits in enumerate(logits):
+                # Se il modello non restituisce i logits per questo task, ignoralo
+                if task_logits is None:
+                    continue
                 task_labels = labels[:, task_idx]
                 top2_preds = task_logits.topk(2, dim=-1).indices
 
@@ -582,6 +584,8 @@ def validate(model, dataloader, device, use_tqdm):
 
 
 def ValidatePaliGemma(model, dataloader, device, use_tqdm, age5_classes=None):
+    # Deprecated: Paligemma evaluation removed.
+    raise NotImplementedError("Paligemma evaluation has been removed.")
     """
     Computes validation metrics with age mapped from 9 bins
     ["0-2","3-9","10-19","20-29","30-39","40-49","50-59","60-69","70+"]
@@ -775,7 +779,7 @@ def ValidatePaliGemma(model, dataloader, device, use_tqdm, age5_classes=None):
         age_per_class_metrics,
     )
 
-def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt, ckpt_dir, paligemma):
+def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt, ckpt_dir, pe_vision_config, siglip2_repo_id, save_to_load):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(output_path, exist_ok=True)
 
@@ -783,7 +787,10 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
         model_type=model_type,
         num_prompt=num_prompt,
         ckpt_dir=ckpt_dir,
-        device=device
+        device=device,
+        pe_vision_config=pe_vision_config,
+        siglip2_repo_id=siglip2_repo_id,
+        loaded_type=save_to_load
     )
     model.to(device)
 
@@ -809,12 +816,8 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
         shuffle=False,
         num_workers=min(4, os.cpu_count() or 0)
     )
-    if not paligemma:
-        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = validate(model, dataloader, device, use_tqdm)
-        # Age classes remain as defined in CLASSES[0]
-    else:
-        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = ValidatePaliGemma(model, dataloader, device, use_tqdm)
-        CLASSES[0] = age_metrics["classes"]
+    top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = validate(model, dataloader, device, use_tqdm)
+    # Age classes remain as defined in CLASSES[0]
 
     # Precision/Recall/F1 (macro) per task + per-class for Age
     prf_task, prf_age_cls = compute_prf_metrics(all_true_labels, all_pred_labels, CLASSES)
@@ -855,7 +858,7 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
     plot_error_distribution(all_true_labels[1], all_pred_labels[1], CLASSES[1], os.path.join(output_path, "gender_error_distributions"))
     plot_error_distribution(all_true_labels[2], all_pred_labels[2], CLASSES[2], os.path.join(output_path, "emotion_error_distributions"))
 
-def _process_single_dataset(model, image_processor, device, batch_size, dataset_path, output_path, use_tqdm, paligemma):
+def _process_single_dataset(model, image_processor, device, batch_size, dataset_path, output_path, use_tqdm):
     os.makedirs(output_path, exist_ok=True)
 
     dataset = BaseDataset(
@@ -872,11 +875,7 @@ def _process_single_dataset(model, image_processor, device, batch_size, dataset_
         num_workers=min(4, os.cpu_count() or 0)
     )
 
-    if not paligemma:
-        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = validate(model, dataloader, device, use_tqdm)
-    else:
-        top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = ValidatePaliGemma(model, dataloader, device, use_tqdm)
-        CLASSES[0] = age_metrics["classes"]
+    top1_acc, top2_acc, onebin_acc, all_true_labels, all_pred_labels, age_metrics = validate(model, dataloader, device, use_tqdm)
 
     # Precision/Recall/F1 (macro) per task + per-class for Age
     prf_task, prf_age_cls = compute_prf_metrics(all_true_labels, all_pred_labels, CLASSES)
@@ -914,7 +913,7 @@ def _process_single_dataset(model, image_processor, device, batch_size, dataset_
     # Return collected metrics so that multi-dataset entrypoint can build a summary
     return top1_acc, top2_acc, onebin_acc
 
-def main_multi(model_type, dataset_paths, batch_size, output_base_path, use_tqdm, num_prompt, ckpt_dir, paligemma):
+def main_multi(model_type, dataset_paths, batch_size, output_base_path, use_tqdm, num_prompt, ckpt_dir, pe_vision_config, siglip2_repo_id, save_to_load):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load model once
@@ -922,7 +921,10 @@ def main_multi(model_type, dataset_paths, batch_size, output_base_path, use_tqdm
         model_type=model_type,
         num_prompt=num_prompt,
         ckpt_dir=ckpt_dir,
-        device=device
+        device=device,
+        pe_vision_config=pe_vision_config,
+        siglip2_repo_id=siglip2_repo_id,
+        loaded_type=save_to_load
     )
     model.to(device)
 
@@ -963,7 +965,6 @@ def main_multi(model_type, dataset_paths, batch_size, output_base_path, use_tqdm
             dataset_path=dp,
             output_path=out_dir,
             use_tqdm=use_tqdm,
-            paligemma=paligemma,
         )
 
         # Store per-task accuracies (indices: 0=age,1=gender,2=emotion)
@@ -1042,8 +1043,9 @@ def argparse_args():
     parser.add_argument('--no_tqdm', action='store_true', help='Disable tqdm progress bar.')
     parser.add_argument('--num_prompt', type=int, default=0, help='Number of prompt tokens to use (only for VPT models).')
     parser.add_argument('--ckpt_dir', type=str, required=True, help='Path to the ckpt directory containing saved artifacts.')
-    parser.add_argument("--paligemma", action='store_true', help='Test using paligemma class')
-
+    parser.add_argument('--pe_vision_config', type=str, default='PECore-L14-336', help='PE-Vision configuration to use.')
+    parser.add_argument('--siglip2_repo_id', type=str, default="google/siglip2-large-patch16-384", help='HuggingFace repo ID for SigLip-2 model.')
+    parser.add_argument('--save_to_load', type=str, choices=['bacc', 'bval'], default='bacc', help="Use the best accuracy saved model or the the best validation loss model.")
     args = parser.parse_args()
     if not args.dataset_path and not args.dataset_paths:
         parser.error('Please specify --dataset_path or --dataset_paths.')
@@ -1060,7 +1062,9 @@ if __name__ == "__main__":
             use_tqdm=not args.no_tqdm,
             num_prompt=args.num_prompt,
             ckpt_dir=args.ckpt_dir,
-            paligemma=args.paligemma,
+            pe_vision_config=args.pe_vision_config,
+            siglip2_repo_id=args.siglip2_repo_id,
+            save_to_load=args.save_to_load,
         )
     else:
         main(
@@ -1071,5 +1075,7 @@ if __name__ == "__main__":
             use_tqdm=not args.no_tqdm,
             num_prompt=args.num_prompt,
             ckpt_dir=args.ckpt_dir,
-            paligemma=args.paligemma
+            pe_vision_config=args.pe_vision_config,
+            siglip2_repo_id=args.siglip2_repo_id,
+            save_to_load=args.save_to_load
         )

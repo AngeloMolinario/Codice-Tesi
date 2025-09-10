@@ -190,7 +190,6 @@ class PECore_Vision(nn.Module):
         torch.save(out_sd, save_path)
         print(f"[PECore_Vision] Vision model saved (visual.* + logit_scale[/bias]) to {save_path}")
 
-
     def get_image_features(self, x, normalize=True):
         features = self.visual(x)
         if normalize:
@@ -207,17 +206,64 @@ class PECore_Vision(nn.Module):
         return features
     
     def forward(self, image):
+        """
+        Restituisce sempre una tupla (age_logit, gender_logit, emotion_logit).
+        Regole:
+          - Se text_features ha 18 vettori (9+2+7): multitask -> split o calcolo per-task con VPT multipli.
+          - Se ha 9 vettori: solo age -> (age_logit, None, None)
+          - Se ha 2 vettori: solo gender -> (None, gender_logit, None)
+          - Se ha 7 vettori: solo emotion -> (None, None, emotion_logit)
+        Funziona sia con nessun/un solo VPT (len(_vpt) <= 1) sia con VPT multipli (len(_vpt) > 1).
+        """
+        if self.text_features.numel() == 0:
+            raise RuntimeError("Text features non impostate. Chiamare set_text_features prima della forward.")
 
-        if len(self._vpt) <= 1:
-            logit = self.logit_scale.exp() * self.get_image_features(image) @ self.text_features.t()
-            return torch.split(logit, [9, 2, 7], dim=-1)
-        
-        text_features = torch.split(self.text_features, [9, 2, 7], dim=0)
-        age_logit = self.logit_scale.exp() * self.get_task_image_features(0, image) @ text_features[0].t()
-        gender_logit = self.logit_scale.exp() * self.get_task_image_features(1, image) @ text_features[1].t()
-        emotion_logit = self.logit_scale.exp() * self.get_task_image_features(2, image) @ text_features[2].t()
-        
-        return age_logit, gender_logit, emotion_logit
+        n_classes = self.text_features.shape[0]
+        scale = self.logit_scale.exp()
+
+        # -------------------- MULTITASK (18 = 9+2+7) --------------------
+        if n_classes == 18:
+            if len(self._vpt) <= 1:
+                img_feat = self.get_image_features(image, normalize=True)
+                logits = scale * (img_feat @ self.text_features.t())
+                age_logit, gender_logit, emotion_logit = torch.split(logits, [9, 2, 7], dim=-1)
+                return age_logit, gender_logit, emotion_logit
+            else:
+                age_tf, gender_tf, emotion_tf = torch.split(self.text_features, [9, 2, 7], dim=0)
+                age_feat = self.get_task_image_features(0, image, normalize=True)
+                gender_feat = self.get_task_image_features(1, image, normalize=True)
+                emotion_feat = self.get_task_image_features(2, image, normalize=True)
+                age_logit = scale * (age_feat @ age_tf.t())
+                gender_logit = scale * (gender_feat @ gender_tf.t())
+                emotion_logit = scale * (emotion_feat @ emotion_tf.t())
+                return age_logit, gender_logit, emotion_logit
+
+        # -------------------- SINGLE TASK (9 / 2 / 7) --------------------
+        if n_classes == 9:  # AGE
+            if len(self._vpt) >= 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            age_logit = scale * (img_feat @ self.text_features.t())
+            return age_logit, None, None
+
+        if n_classes == 2:  # GENDER
+            if len(self._vpt) >= 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            gender_logit = scale * (img_feat @ self.text_features.t())
+            return None, gender_logit, None
+
+        if n_classes == 7:  # EMOTION
+            if len(self._vpt) >= 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            emotion_logit = scale * (img_feat @ self.text_features.t())
+            return None, None, emotion_logit
+
+        raise ValueError(f"Numero di text features non supportato: {n_classes}. Attesi 9, 2, 7 oppure 18 (9+2+7).")
 
     def set_text_features(self, text_features):
         self.text_features = text_features
@@ -239,7 +285,6 @@ class PECore_Vision(nn.Module):
             print(f"VPT token loaded from {ckpt_path}")
         else:
             print(f"No VPT token found in {ckpt_path}")
-
 
     def load_baseline(self, ckpt_path, device):
         """

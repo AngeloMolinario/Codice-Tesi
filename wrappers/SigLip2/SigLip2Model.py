@@ -35,7 +35,7 @@ def safetensors_to_pth(safetensors_file, output_dir, repo_id="google/siglip2-lar
     tensors = load_file(safetensors_file)
     model = Siglip2Model(AutoConfig.from_pretrained(repo_id, cache_dir=output_dir), 0)
     model.load_state_dict(tensors)
-    torch.save(model.state_dict(), os.path.join(output_dir, "model.pt"))
+    torch.save(model.state_dict(), os.path.join(output_dir, repo_id.split("/")[-1].replace("-","_") + ".pt"))
 
 
 class Siglip2Model(SiglipPreTrainedModel):
@@ -152,7 +152,7 @@ class Siglip2Model(SiglipPreTrainedModel):
             # Convert the model to .pth format
             safetensors_to_pth(sf_path, output_dir=os.path.dirname(path), repo_id=repo_id)
         # Load the model
-        state_dict = torch.load(os.path.join(os.path.dirname(path), "model.pt"), map_location=map_location)
+        state_dict = torch.load(os.path.join(os.path.dirname(path), repo_id.split("/")[-1].replace("-","_") + ".pt"), map_location=map_location)
         result = self.load_state_dict(state_dict, strict=False)
         
         # Check for missing or mismatching keys during the loading of the state_dict
@@ -240,6 +240,7 @@ class Siglip2Vision(nn.Module):
         config.vision_config.torch_dtype = "float32"
         self.config = config            
         self.num_prompt = num_prompt
+        self.image_size = vision_config.image_size
         
         # If num prompt is 0 than the model is the pure baseline
         self.vision_model = SiglipVisionModel(vision_config, num_prompt=num_prompt)
@@ -286,7 +287,7 @@ class Siglip2Vision(nn.Module):
         return vision_outputs
 
     def get_task_image_features(self, task_id, image, normalize=True):
-        self.vision_model.prompt_learner = self._vpt[task_id].to(self.vision_model.device)
+        self.vision_model.prompt_learner = self._vpt[task_id]
         vision_outputs = self.vision_model(
             pixel_values=image,
             output_attentions=self.config.output_attentions,
@@ -298,19 +299,76 @@ class Siglip2Vision(nn.Module):
         return vision_outputs
     
     def forward(self, image):
+        """
+        Ritorna sempre una tupla (age_logit, gender_logit, emotion_logit).
+        Regole:
+          - Se text_features ha 18 vettori: scenario multitask (9,2,7) -> split o calcolo per-task con VPT multipli.
+          - Se text_features ha 9 vettori: solo age -> (age_logit, None, None)
+          - Se text_features ha 2 vettori: solo gender -> (None, gender_logit, None)
+          - Se text_features ha 7 vettori: solo emotion -> (None, None, emotion_logit)
+        Funziona sia con un solo/no VPT (len(_vpt) <= 1) sia con VPT multipli (len(_vpt) > 1).
+        """
+        if self.text_features.numel() == 0:
+            raise RuntimeError("Text features non impostate. Usare set_text_features prima della forward.")
 
-        if len(self._vpt) <= 1:
-            logit = self.logit_scale.exp() * self.get_image_features(image) @ self.text_features.t()
-            return torch.split(logit, [9, 2, 7], dim=-1)
-        
-        text_features = torch.split(self.text_features, [9, 2, 7], dim=0)
-        age_logit = self.logit_scale.exp() * self.get_task_image_features(0, image) @ text_features[0].t()
-        gender_logit = self.logit_scale.exp() * self.get_task_image_features(1, image) @ text_features[1].t()
-        emotion_logit = self.logit_scale.exp() * self.get_task_image_features(2, image) @ text_features[2].t()
-        
-        return age_logit, gender_logit, emotion_logit
+        n_classes = self.text_features.shape[0]
+        scale = self.logit_scale.exp()
+
+        # -------------------- MULTITASK (18 = 9+2+7) --------------------
+        if n_classes == 18:
+            if len(self._vpt) <= 1:
+                # Calcolo unico e split
+                image_feats = self.get_image_features(image, normalize=True)
+                logits = scale * (image_feats @ self.text_features.t())
+                age_logit, gender_logit, emotion_logit = torch.split(logits, [9, 2, 7], dim=-1)
+                return age_logit, gender_logit, emotion_logit
+            else:
+                # Calcolo per task con VPT dedicato
+                age_tf, gender_tf, emotion_tf = torch.split(self.text_features, [9, 2, 7], dim=0)
+                age_feat = self.get_task_image_features(0, image, normalize=True)
+                gender_feat = self.get_task_image_features(1, image, normalize=True)
+                emotion_feat = self.get_task_image_features(2, image, normalize=True)
+                age_logit = scale * (age_feat @ age_tf.t())
+                gender_logit = scale * (gender_feat @ gender_tf.t())
+                emotion_logit = scale * (emotion_feat @ emotion_tf.t())
+                return age_logit, gender_logit, emotion_logit
+
+        # -------------------- SINGLE TASK (9 / 2 / 7) --------------------
+        if n_classes == 9:  # AGE
+            if len(self._vpt) > 1:
+                # Se per qualche motivo ci sono più VPT, usa il primo
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            elif len(self._vpt) == 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            age_logit = scale * (img_feat @ self.text_features.t())
+            return age_logit, None, None
+
+        if n_classes == 2:  # GENDER
+            if len(self._vpt) > 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            elif len(self._vpt) == 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            gender_logit = scale * (img_feat @ self.text_features.t())
+            return None, gender_logit, None
+
+        if n_classes == 7:  # EMOTION
+            if len(self._vpt) > 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            elif len(self._vpt) == 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            emotion_logit = scale * (img_feat @ self.text_features.t())
+            return None, None, emotion_logit
+
+        raise ValueError(f"Numero di text features non supportato: {n_classes}. Attesi 9, 2, 7 oppure 18 (9+2+7).")
 
     def set_text_features(self, text_features):
+        # ...existing code...
         self.text_features = text_features
 
     def load_VPT_token(self, ckpt_path, device):
@@ -375,7 +433,7 @@ class Siglip2Vision(nn.Module):
             print("Model not found locally. Downloading from the hub...")
             sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path) if path else None)
             safetensors_to_pth(sf_path, output_dir=os.path.dirname(path) if path else ".", repo_id=repo_id)
-            state_dict = torch.load(os.path.join(os.path.dirname(path) if path else ".", repo_id.split("/")[-1].replace("-","_")+".pt"), map_location=map_location)
+            state_dict = torch.load(os.path.join(os.path.dirname(path) if path else ".", repo_id.split("/")[-1].replace("-","_") + ".pt"), map_location=map_location)
             result = self.load_state_dict(state_dict, strict=False)
 
         # Report loading status
