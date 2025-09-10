@@ -284,7 +284,7 @@ def save_confusion_matrices_as_images(confusion_matrices, class_names_per_task, 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters())
 
-def _discover_in_ckpt_dir(ckpt_dir: str):
+def _discover_in_ckpt_dir(ckpt_dir: str, save_: str = "bacc"):
     """
     From a single ckpt directory, discover useful artifacts:
     - vision checkpoint (prefer vision_ckpt.pt in ckpt_dir, else parent dir)
@@ -310,14 +310,13 @@ def _discover_in_ckpt_dir(ckpt_dir: str):
     vpt_tokens = []
     if os.path.isdir(ckpt_dir):
         for fn in sorted(os.listdir(ckpt_dir)):
-            if fn.startswith("vpt_token") and fn.endswith(".pt") and "bval" in fn:
+            if fn.startswith("vpt_token") and fn.endswith(".pt") and save_ in fn:
                 vpt_tokens.append(os.path.join(ckpt_dir, fn))
 
     # Text features inside ckpt dir
     text_feats = None
     # Prefer only best-accuracy text features
-    #bacc_path = os.path.join(ckpt_dir, "text_features_bacc.pt")
-    bacc_path = os.path.join(ckpt_dir, "text_features_bval.pt")
+    bacc_path = os.path.join(ckpt_dir, f"text_features_{save_}.pt")
     if not os.path.exists(bacc_path):
         bacc_path = os.path.join(ckpt_dir, "text_features.pt")
     if os.path.isfile(bacc_path):
@@ -347,13 +346,13 @@ def _load_text_features_if_any(model, tokenizer, text_ckpt_path, device):
             exit(0)
         else:
             raise RuntimeError("No text features provided and model has no text_model to build them.")
-
+    print("Loaded text features with shape:", text_features.shape)
     return text_features
 
 
-def load_model(model_type, num_prompt, ckpt_dir, device, siglip2_repo_id="google/siglip2-base-patch16-224", pe_vision_config="PE-Core-L14-336"):
+def load_model(model_type, num_prompt, ckpt_dir, device, siglip2_repo_id="google/siglip2-base-patch16-224", pe_vision_config="PE-Core-L14-336", loaded_type="bacc"):
     # Discover artifacts from ckpt_dir
-    vision_ckpt, vpt_tokens, text_feats_path = _discover_in_ckpt_dir(ckpt_dir)
+    vision_ckpt, vpt_tokens, text_feats_path = _discover_in_ckpt_dir(ckpt_dir, save_=loaded_type)
     
     if model_type == 'PECoreBase':
         model = PECore_Vision(
@@ -780,7 +779,7 @@ def ValidatePaliGemma(model, dataloader, device, use_tqdm, age5_classes=None):
         age_per_class_metrics,
     )
 
-def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt, ckpt_dir, pe_vision_config, siglip2_repo_id):
+def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt, ckpt_dir, pe_vision_config, siglip2_repo_id, save_to_load):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(output_path, exist_ok=True)
 
@@ -790,7 +789,8 @@ def main(model_type, dataset_path, batch_size, output_path, use_tqdm, num_prompt
         ckpt_dir=ckpt_dir,
         device=device,
         pe_vision_config=pe_vision_config,
-        siglip2_repo_id=siglip2_repo_id
+        siglip2_repo_id=siglip2_repo_id,
+        loaded_type=save_to_load
     )
     model.to(device)
 
@@ -913,7 +913,7 @@ def _process_single_dataset(model, image_processor, device, batch_size, dataset_
     # Return collected metrics so that multi-dataset entrypoint can build a summary
     return top1_acc, top2_acc, onebin_acc
 
-def main_multi(model_type, dataset_paths, batch_size, output_base_path, use_tqdm, num_prompt, ckpt_dir, pe_vision_config, siglip2_repo_id):
+def main_multi(model_type, dataset_paths, batch_size, output_base_path, use_tqdm, num_prompt, ckpt_dir, pe_vision_config, siglip2_repo_id, save_to_load):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load model once
@@ -923,7 +923,8 @@ def main_multi(model_type, dataset_paths, batch_size, output_base_path, use_tqdm
         ckpt_dir=ckpt_dir,
         device=device,
         pe_vision_config=pe_vision_config,
-        siglip2_repo_id=siglip2_repo_id
+        siglip2_repo_id=siglip2_repo_id,
+        loaded_type=save_to_load
     )
     model.to(device)
 
@@ -1044,6 +1045,7 @@ def argparse_args():
     parser.add_argument('--ckpt_dir', type=str, required=True, help='Path to the ckpt directory containing saved artifacts.')
     parser.add_argument('--pe_vision_config', type=str, default='PECore-L14-336', help='PE-Vision configuration to use.')
     parser.add_argument('--siglip2_repo_id', type=str, default="google/siglip2-large-patch16-384", help='HuggingFace repo ID for SigLip-2 model.')
+    parser.add_argument('--save_to_load', type=str, choices=['bacc', 'bval'], default='bacc', help="Use the best accuracy saved model or the the best validation loss model.")
     args = parser.parse_args()
     if not args.dataset_path and not args.dataset_paths:
         parser.error('Please specify --dataset_path or --dataset_paths.')
@@ -1062,6 +1064,7 @@ if __name__ == "__main__":
             ckpt_dir=args.ckpt_dir,
             pe_vision_config=args.pe_vision_config,
             siglip2_repo_id=args.siglip2_repo_id,
+            save_to_load=args.save_to_load,
         )
     else:
         main(
@@ -1074,4 +1077,5 @@ if __name__ == "__main__":
             ckpt_dir=args.ckpt_dir,
             pe_vision_config=args.pe_vision_config,
             siglip2_repo_id=args.siglip2_repo_id,
+            save_to_load=args.save_to_load
         )
