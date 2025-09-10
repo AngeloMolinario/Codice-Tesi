@@ -2,6 +2,8 @@
     "TUNING" : "softcpt",
     "MODEL"  : "pecore",
     "TASK"   : -1,
+    "MODEL_TYPE" : "PE-Core-B16-224",
+    "MODEL_TYPE_LARGE" : "PE-Core-L14-336",
 
     "NUM_VISUAL_PROMPT" : 0,
     "NUM_TEXT_CNTX" : 24,
@@ -13,17 +15,18 @@
     ],    
     "NAMED_TRAINABLE_PARAMETERS": [
         "prompt_learner",
+        "class_prompt_learner",
         "task_prompt_learner", 
         "prompt_gen"
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB", "MiviaGender", "CelebA_HQ", "Lagenda"],
+        "-1" : ["FairFace", "RAF-DB", "CelebA_HQ", "Lagenda"],
         "0"  : ["FairFace"],   
         "1"  : ["RAF-DB"],
         "2"  : ["RAF-DB"]    
     },
-    "CSP": false,
+    "CSP": true,
     "EMD_WEIGHT" : 30,
     "EMD_OMEGA" : 2.0,
     "EMD_MU": -0.0025,
@@ -31,12 +34,11 @@
     "BALANCE_TASK" : {"2" : 0.33},
     "BATCH_SIZE" : 512,
     "NUM_WORKERS" : 4,
-    "LR" : 0.002,
-    "OUTPUT_DIR" : "../TRAIN/PECore/SoftCPT/TSCA_augment_Lagenda",
+    "LR" : 0.0002,
+    "OUTPUT_DIR" : "../TRAIN/PECore/L14/SoftCPT/TSCA_augment",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
     "USE_TQDM": false,
-    "EPOCHS" : 100,
-    "PATIENCE" : 15
-
+    "EPOCHS" : 25,
+    "PATIENCE" : 6
 }

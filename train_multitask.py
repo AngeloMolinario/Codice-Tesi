@@ -54,10 +54,10 @@ def get_loss_fn(config, weights=[None, None, None]):
     ]
     return loss
 
-def get_augmentation_transform(config):
+def get_augmentation_transform(config, image_size):
     model_name = config.MODEL.lower()
     tform = [
-        T.Resize((224,224)),
+        T.Resize((image_size, image_size)),
         T.RandomHorizontalFlip(p=0.5),
         T.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.05),
         T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 0.4))], p=0.5),
@@ -323,12 +323,12 @@ def main():
 
     training_set =  get_dataset(config=config,
                                split="train",
-                               transform=get_image_transform(config),
-                               augmentation_transform=get_augmentation_transform(config)
+                               transform=get_image_transform(config, model.image_size),
+                               augmentation_transform=get_augmentation_transform(config, model.image_size)
                                )
     validation_set = get_dataset(config=config,
                                  split="val",
-                                 transform=get_image_transform(config)
+                                 transform=get_image_transform(config, model.image_size)
                                 )
 
 

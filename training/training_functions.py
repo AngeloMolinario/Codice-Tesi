@@ -6,7 +6,7 @@ from transformers import AutoConfig
 
 from core.vision_encoder import transforms
 from wrappers.PerceptionEncoder.pe import PECore
-from wrappers.promptopt.prompt_learner import CustomModel
+from wrappers.promptopt.prompt_learner import CustomModel, CoopModel
 from wrappers.SigLip2.SigLip2Model import Siglip2Model
 from wrappers.tokenizer import PETokenizer, SigLip2Tokenizer
 
@@ -111,16 +111,16 @@ def build_weighted_sampler(dataset, class_weights_per_task, device, combine="mea
     sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
     return sampler, weights
 
-def get_image_transform(config):
+def get_image_transform(config, image_size):
     '''
         Get the image transformation used during the pretraining of the specific model.
     '''
     model_name = config.MODEL.lower()
     if model_name == 'pecore':
-        return transforms.get_image_transform(224)
+        return transforms.get_image_transform(image_size)
     elif model_name == 'siglip2':
         return T.Compose([
-            T.Resize((224, 224)),
+            T.Resize((image_size, image_size)),
             T.ToTensor(),
             T.Normalize([0.5,0.5,0.5], [0.5,0.5,0.5])
         ])
@@ -140,10 +140,35 @@ def get_model(config):
     ''' This method look at the configuration file and return the correct model initialized with pretrained weights and the specified attributes'''
     tuning = config.TUNING.lower()
     model_name = config.MODEL.lower()
+    if tuning == 'coop':
+        if model_name == "pecore":
+            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=0)
+            model = CoopModel(
+                n_ctx=config.NUM_TEXT_CNTX,
+                classes=config.CLASSES[config.TASK],
+                model=base_model,
+                tokenizer=get_tokenizer(config)
+            )
+            return model
+        elif model_name == "siglip2":
+            base_model = Siglip2Model(
+                config=AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
+                num_prompts=config.NUM_VISUAL_PROMPT
+            )
+            base_model.load_model(path="./hf_models/model.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
+            model = CoopModel(
+                n_ctx=config.NUM_TEXT_CNTX,
+                classes=config.CLASSES[config.TASK],
+                model=base_model,
+                tokenizer=get_tokenizer(config)
+            )
+            return model
+        else:
+            raise ValueError(f"Unknown model name: {model_name}")
 
     if tuning == "softcpt":
         if model_name == "pecore":
-            base_model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
             model = CustomModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 tasknames=config.TASK_NAMES,
@@ -156,10 +181,10 @@ def get_model(config):
         
         elif model_name == "siglip2":
             base_model = Siglip2Model(
-                config=AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                config=AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            base_model.load_model(path="./hf_models/model.pth", map_location="cpu")
+            base_model.load_model(path="./hf_models/model.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
             model = CustomModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 tasknames=config.TASK_NAMES,
@@ -174,15 +199,15 @@ def get_model(config):
 
     elif tuning == "vpt":
         if model_name == "pecore":
-            model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+            model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
             return model
         
         elif model_name == "siglip2":
             model = Siglip2Model(
-                config = AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                config = AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            model.load_model(path="./hf_models/model.pth", map_location="cpu")
+            model.load_model(path="./hf_models/model.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
             return model
         
         else:

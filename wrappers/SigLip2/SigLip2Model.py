@@ -30,12 +30,12 @@ def download_from_hub(repo_id, filename, cache_dir=None):
     print(f"Downloaded to {local_file}")
     return local_file
 
-def safetensors_to_pth(safetensors_file, output_dir):
+def safetensors_to_pth(safetensors_file, output_dir, repo_id="google/siglip2-large-patch16-384"):
     # Load the safetensors file
     tensors = load_file(safetensors_file)
-    model = Siglip2Model(AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir=output_dir), 0)
+    model = Siglip2Model(AutoConfig.from_pretrained(repo_id, cache_dir=output_dir), 0)
     model.load_state_dict(tensors)
-    torch.save(model.state_dict(), os.path.join(output_dir, "model.pth"))
+    torch.save(model.state_dict(), os.path.join(output_dir, "model.pt"))
 
 
 class Siglip2Model(SiglipPreTrainedModel):
@@ -65,6 +65,7 @@ class Siglip2Model(SiglipPreTrainedModel):
         self.config = config    
         text_config = config.text_config
         vision_config = config.vision_config
+        self.image_size = vision_config.image_size
         # Initialize the text and vision models with the number of prompts
         self.text_model = SiglipTextModel(text_config)
         # If num prompt is 0 than the model is the pure baseline
@@ -128,15 +129,6 @@ class Siglip2Model(SiglipPreTrainedModel):
         torch.save(out_sd, save_path)
         print(f"[Siglip2Model] Vision model saved (vision_model.* + logit_scale[/bias]) to {save_path}")
 
-    def save_logit(self, save_path, filename="logits.pt"):
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        state_dict = {
-            'logit_scale' : self.logit_scale,
-            'logit_bias' : self.logit_bias
-        }
-        torch.save(state_dict, os.path.join(save_path, filename))
-        print(f"Logit scale and bias saved in {os.path.join(save_path, filename)}")
-
     def save_vpt_token(self, save_path):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         if hasattr(self.vision_model, 'prompt_learner') and self.vision_model.prompt_learner is not None:
@@ -149,7 +141,7 @@ class Siglip2Model(SiglipPreTrainedModel):
         else:
             print(f"Prompt learner not found in vision model, skipping save.")
                 
-    def load_model(self, path, map_location, repo_id="google/siglip2-base-patch16-224", filename="model.safetensors"):
+    def load_model(self, path, map_location, repo_id="google/siglip2-large-patch16-384", filename="model.safetensors"):
         # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
 
         # Check if the file exists
@@ -158,9 +150,9 @@ class Siglip2Model(SiglipPreTrainedModel):
             # If not, download it from the hub
             sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path))
             # Convert the model to .pth format
-            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path))
+            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path), repo_id=repo_id)
         # Load the model
-        state_dict = torch.load(os.path.join(os.path.dirname(path), "model.pth"), map_location=map_location)
+        state_dict = torch.load(os.path.join(os.path.dirname(path), "model.pt"), map_location=map_location)
         result = self.load_state_dict(state_dict, strict=False)
         
         # Check for missing or mismatching keys during the loading of the state_dict
@@ -382,7 +374,7 @@ class Siglip2Vision(nn.Module):
             # Fallback to Hub download/convert and load full state_dict
             print("Model not found locally. Downloading from the hub...")
             sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path) if path else None)
-            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path) if path else ".")
+            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path) if path else ".", repo_id=repo_id)
             state_dict = torch.load(os.path.join(os.path.dirname(path) if path else ".", "model.pth"), map_location=map_location)
             result = self.load_state_dict(state_dict, strict=False)
 
