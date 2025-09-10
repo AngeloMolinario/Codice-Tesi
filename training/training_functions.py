@@ -142,7 +142,7 @@ def get_model(config):
     model_name = config.MODEL.lower()
     if tuning == 'coop':
         if model_name == "pecore":
-            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=0)
+            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
             model = CoopModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 classes=config.CLASSES[config.TASK],

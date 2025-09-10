@@ -17,18 +17,19 @@ if __name__ == "__main__":
     print("Starting SiglipModel test...")
 
     
-    model_name = "google/siglip2-base-patch16-224"
+    model_name = "google/siglip2-large-patch16-384"
     num_prompts = 0
     siglip2Config = AutoConfig.from_pretrained(model_name, cache_dir="./hf_models")
     custom_model = Siglip2Model(siglip2Config, num_prompts=num_prompts)
     custom_model.load_model(
-        path="./hf_models/model.pth",
+        path="./hf_models/model.pt",
+        repo_id=model_name,
         map_location="cpu"
     )
 
-    model = AutoModel.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
-    tokenizer = AutoTokenizer.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
-    image_processor = AutoImageProcessor.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models")
+    model = AutoModel.from_pretrained(model_name, cache_dir="./hf_models")
+    tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir="./hf_models")
+    image_processor = AutoImageProcessor.from_pretrained(model_name, cache_dir="./hf_models")
     
 
     print("#" * 39)

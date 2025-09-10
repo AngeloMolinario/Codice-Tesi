@@ -375,7 +375,7 @@ class Siglip2Vision(nn.Module):
             print("Model not found locally. Downloading from the hub...")
             sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path) if path else None)
             safetensors_to_pth(sf_path, output_dir=os.path.dirname(path) if path else ".", repo_id=repo_id)
-            state_dict = torch.load(os.path.join(os.path.dirname(path) if path else ".", "model.pth"), map_location=map_location)
+            state_dict = torch.load(os.path.join(os.path.dirname(path) if path else ".", repo_id.split("/")[-1].replace("-","_")+".pt"), map_location=map_location)
             result = self.load_state_dict(state_dict, strict=False)
 
         # Report loading status

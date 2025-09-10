@@ -64,6 +64,7 @@ def single_task_train_fn(model, dataloader, optimizer, loss_fn, device, config, 
     
     
     if text_features is not None:
+        print("Using precomputed text features")
         computed_text_features = text_features.T.contiguous()        
     else:
         computed_text_features = None
@@ -365,7 +366,7 @@ def main():
         text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
         torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
 
-        text_features = torch.split(text_features, (9,2,7))[config.TASK]
+        #text_features = torch.split(text_features, (9,2,7))[config.TASK]
         print(f"text_features task shape {text_features.shape}")
 
     model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")

@@ -586,7 +586,13 @@ class CoopModel(nn.Module):
         text_features = self.get_text_features(normalize=normalize).detach().cpu()
         torch.save({'text_features': text_features}, text_features_path)
         print(f"[CoopCustomModel] Text features salvate in: {text_features_path} (shape: {text_features.shape})")
+    def save_vpt_token(self, save_path):
+        """
+        Salva i token del prompt learner per poterli riutilizzare in futuro.
+        """
+        self.model.save_vpt_token(save_path)
 
+        
     def save_for_training(self, save_path: str):
         """
         Salva tutto il modello (inclusi tutti i pesi dei vari prompt learner e task prompt learner)
