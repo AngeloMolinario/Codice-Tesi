@@ -240,6 +240,7 @@ class Siglip2Vision(nn.Module):
         config.vision_config.torch_dtype = "float32"
         self.config = config            
         self.num_prompt = num_prompt
+        self.image_size = vision_config.image_size
         
         # If num prompt is 0 than the model is the pure baseline
         self.vision_model = SiglipVisionModel(vision_config, num_prompt=num_prompt)
