@@ -1,8 +1,8 @@
 #! /bin/bash
 
 # Define default values
-DATASETS=("RAF-DB")  # List of datasets to test
-BATCH_SIZE=64
+DATASETS=("UTKFace" "FairFace")  # List of datasets to test
+BATCH_SIZE=50
 BASE_DATASET_PATH="../processed_datasets/datasets_with_standard_labels"
 
 # Build list of valid dataset paths
@@ -23,7 +23,7 @@ fi
 
 echo "Running a single test invocation over ${#DATASET_PATHS[@]} datasets..."
 echo "Datasets: ${DATASET_PATHS[*]}"
-echo "Testing Siglip2 BASE with VPT tokens..."
+exit 0
 python3 test.py \
   --model_type "Siglip2VPT" \
   --dataset_paths "${DATASET_PATHS[@]}" \
