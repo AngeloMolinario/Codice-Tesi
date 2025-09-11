@@ -360,7 +360,7 @@ def main():
     train_fn = single_task_train_fn
     val_fn = single_task_val_fn
 
-    if config.TUNING == "coop":
+    if config.TUNING == "coop" or config.TUNING == "mixed":
         text_features = None
     else:
         text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)

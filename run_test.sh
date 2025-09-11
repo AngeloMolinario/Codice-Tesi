@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # Define default values
-DATASETS=("UTKFace" "FairFace")  # List of datasets to test
+DATASETS=("RAF-DB")  # List of datasets to test
 BATCH_SIZE=50
 BASE_DATASET_PATH="../processed_datasets/datasets_with_standard_labels"
 
@@ -23,12 +23,15 @@ fi
 
 echo "Running a single test invocation over ${#DATASET_PATHS[@]} datasets..."
 echo "Datasets: ${DATASET_PATHS[*]}"
-exit 0
+echo "Testing PECore BASE with VPT tokens..."
 python3 test.py \
-  --model_type "Siglip2VPT" \
+  --model_type "PECoreVPT" \
   --dataset_paths "${DATASET_PATHS[@]}" \
   --batch_size ${BATCH_SIZE} \
-  --output_base_path "../TEST/Siglip2/B16/Mixed/Emotion_10e_4lr/" \
-  --num_prompt 20 \
-  --ckpt_dir "../TRAIN/Siglip2/B16/Mixed/Emotion_10e_4lr/ckpt" 
+  --output_base_path "../TEST/PECore/L14/vpt/Emotion/" \
+  --num_prompt 10 \
+  --ckpt_dir "../TRAIN/PECore/L14/vpt/Emotion/ckpt" \
+  --save_to_load "bval" \
+  --pe_vision_config "PE-Core-L14-336" \
+
 exit $?
