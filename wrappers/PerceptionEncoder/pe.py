@@ -198,7 +198,7 @@ class PECore_Vision(nn.Module):
         return features
     
     def get_task_image_features(self, task_id, image, normalize=True):
-        self.visual.prompt_learner = self._vpt[task_id].to(self.visual.device)
+        self.visual.prompt_learner = self._vpt[task_id]
         features = self.visual(image)
         if normalize:
             features = F.normalize(features, p=2, dim=-1)

@@ -1043,9 +1043,9 @@ def argparse_args():
     parser.add_argument('--no_tqdm', action='store_true', help='Disable tqdm progress bar.')
     parser.add_argument('--num_prompt', type=int, default=0, help='Number of prompt tokens to use (only for VPT models).')
     parser.add_argument('--ckpt_dir', type=str, required=True, help='Path to the ckpt directory containing saved artifacts.')
-    parser.add_argument('--pe_vision_config', type=str, default='PECore-L14-336', help='PE-Vision configuration to use.')
+    parser.add_argument('--pe_vision_config', type=str, default="PE-Core-L14-336", help='PE-Vision configuration to use.')
     parser.add_argument('--siglip2_repo_id', type=str, default="google/siglip2-large-patch16-384", help='HuggingFace repo ID for SigLip-2 model.')
-    parser.add_argument('--save_to_load', type=str, choices=['bacc', 'bval'], default='bacc', help="Use the best accuracy saved model or the the best validation loss model.")
+    parser.add_argument('--save_to_load', type=str, choices=['bacc', 'bval'], default='bval', help="Use the best accuracy saved model or the the best validation loss model.")
     args = parser.parse_args()
     if not args.dataset_path and not args.dataset_paths:
         parser.error('Please specify --dataset_path or --dataset_paths.')
