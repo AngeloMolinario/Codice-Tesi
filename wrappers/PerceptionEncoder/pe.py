@@ -24,13 +24,18 @@ class PECore(nn.Module):
         text_cfg: PETextConfig,
         init_logit_scale: float = np.log(1 / 0.07),
         num_prompt: int = 0,  # Number of context prompt tokens to be prepended to the image patches
+        deep_prompt: bool = False,
     ):
         super(PECore, self).__init__()
-        self.visual = CustomVisionTransformer(**asdict(vision_cfg), num_prompt=num_prompt)
+        self.visual = CustomVisionTransformer(
+            **asdict(vision_cfg), num_prompt=num_prompt, deep_prompt=deep_prompt
+        )
         self.image_size = self.visual.image_size  # For ease of use
         self.text_model = CustomTextTransformer(**asdict(text_cfg))
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
         self.dtype = self.text_model.token_embedding.weight.dtype  # Get the dtype from the text model
+        self.num_prompt = num_prompt
+        self.deep_prompt = deep_prompt
 
     def get_image_features(self, image, normalize: bool = False):
         x = self.visual(image)
@@ -138,6 +143,32 @@ class PECore(nn.Module):
         else:
             print("Nessun prompt learner trovato nella componente visiva. Skipping save.")
 
+    def load_VPT_token(self, ckpt_path, device):
+        checkpoint = torch.load(ckpt_path, map_location=device)
+        if 'prompt_learner' in checkpoint:
+            if self.deep_prompt:
+                vpt = nn.ModuleList(
+                    [
+                        VisionPromptLearner(
+                            emb_size=self.visual.width,
+                            num_prompt=self.num_prompt,
+                            is_cls_present=False,
+                        )
+                        for _ in range(self.visual.layers)
+                    ]
+                )
+            else:
+                vpt = VisionPromptLearner(
+                    emb_size=self.visual.width,
+                    num_prompt=self.num_prompt,
+                    is_cls_present=False,
+                )
+            vpt.load_state_dict(checkpoint['prompt_learner'])
+            self.visual.prompt_learner = vpt.to(device)
+            print(f"VPT token loaded from {ckpt_path}")
+        else:
+            print(f"No VPT token found in {ckpt_path}")
+
     @classmethod
     def from_config(
         cls,
@@ -145,11 +176,17 @@ class PECore(nn.Module):
         pretrained: bool = False,
         checkpoint_path: Optional[str] = None,
         num_prompt: int = 0,  # Number of context prompt tokens to be prepended to the image patches
+        deep_prompt: bool = False,
     ):
         if name not in PE_VISION_CONFIG or name not in PE_TEXT_CONFIG:
             raise RuntimeError(f"{name} not found in configs.")
 
-        model = cls(PE_VISION_CONFIG[name], PE_TEXT_CONFIG[name], num_prompt=num_prompt)
+        model = cls(
+            PE_VISION_CONFIG[name],
+            PE_TEXT_CONFIG[name],
+            num_prompt=num_prompt,
+            deep_prompt=deep_prompt,
+        )
         if pretrained:
             model.visual.load_ckpt(fetch_pe_checkpoint(name, checkpoint_path))
             model.text_model.load_ckpt(fetch_pe_checkpoint(name, checkpoint_path))
@@ -157,16 +194,17 @@ class PECore(nn.Module):
         return model
 
 
-from ..promptopt.prompt_learner import VisionPromptLearner
-
 class PECore_Vision(nn.Module):
-    def __init__(self, vision_cfg, num_prompt):
+    def __init__(self, vision_cfg, num_prompt, deep_prompt: bool = False):
         super().__init__()
-        self.visual = CustomVisionTransformer(**asdict(vision_cfg), num_prompt=num_prompt)
+        self.visual = CustomVisionTransformer(
+            **asdict(vision_cfg), num_prompt=num_prompt, deep_prompt=deep_prompt
+        )
         self.image_size = self.visual.image_size
-        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))        
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.num_prompt = num_prompt
-        self._vpt = []       
+        self.deep_prompt = deep_prompt
+        self._vpt = []
         self.register_buffer('text_features', torch.empty(0))
         self.logit_scale = nn.Parameter(torch.ones([]))
 
@@ -271,15 +309,24 @@ class PECore_Vision(nn.Module):
     def load_VPT_token(self, ckpt_path, device):
         checkpoint = torch.load(ckpt_path, map_location=device)
         if 'prompt_learner' in checkpoint:
-            # Inizializza un'istanza di VisionPromptLearner
-            vpt = VisionPromptLearner(
-                emb_size=self.visual.width,
-                num_prompt=self.num_prompt,
-                is_cls_present=False
-            )
-            # Carica i pesi salvati nel prompt learner
+            if self.deep_prompt:
+                vpt = nn.ModuleList(
+                    [
+                        VisionPromptLearner(
+                            emb_size=self.visual.width,
+                            num_prompt=self.num_prompt,
+                            is_cls_present=False,
+                        )
+                        for _ in range(self.visual.layers)
+                    ]
+                )
+            else:
+                vpt = VisionPromptLearner(
+                    emb_size=self.visual.width,
+                    num_prompt=self.num_prompt,
+                    is_cls_present=False,
+                )
             vpt.load_state_dict(checkpoint['prompt_learner'])
-            # Aggiungi il prompt learner alla lista e spostalo sul dispositivo
             self._vpt.append(vpt.to(device))
             self.visual.prompt_learner = vpt.to(device)
             print(f"VPT token loaded from {ckpt_path}")
