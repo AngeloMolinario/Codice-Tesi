@@ -142,7 +142,12 @@ def get_model(config):
     model_name = config.MODEL.lower()
     if tuning == 'coop':
         if model_name == "pecore":
-            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+            base_model = PECore.from_config(
+                config.MODEL_TYPE,
+                pretrained=True,
+                num_prompt=config.NUM_VISUAL_PROMPT,
+                deep_prompt=getattr(config, "DEEP_PROMPT", False),
+            )
             model = CoopModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 classes=config.CLASSES[config.TASK],
@@ -168,7 +173,12 @@ def get_model(config):
 
     if tuning == "softcpt":
         if model_name == "pecore":
-            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+            base_model = PECore.from_config(
+                config.MODEL_TYPE,
+                pretrained=True,
+                num_prompt=config.NUM_VISUAL_PROMPT,
+                deep_prompt=getattr(config, "DEEP_PROMPT", False),
+            )
             model = CustomModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 tasknames=config.TASK_NAMES,
@@ -199,7 +209,12 @@ def get_model(config):
 
     elif tuning == "vpt":
         if model_name == "pecore":
-            model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+            model = PECore.from_config(
+                config.MODEL_TYPE,
+                pretrained=True,
+                num_prompt=config.NUM_VISUAL_PROMPT,
+                deep_prompt=getattr(config, "DEEP_PROMPT", False),
+            )
             return model
         
         elif model_name == "siglip2":
