@@ -357,6 +357,7 @@ def main():
 
     # Training loop
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
+    os.makedirs(os.path.join(config.OUTPUT_DIR, task_names[0]), exist_ok=True)
     train_fn = single_task_train_fn
     val_fn = single_task_val_fn
 
@@ -394,7 +395,7 @@ def main():
         tracker.update_confusion(0, all_preds_list[0], all_labels_list[0], epoch)
 
         # Age analysis and save avg_probs matrix to match multitask outputs
-        epoch_analysis_dir = os.path.join(config.OUTPUT_DIR, config.TASK_NAMES[config.TASK].replace(" ", "_"), f"epoch_{epoch+1}")
+        epoch_analysis_dir = os.path.join(config.OUTPUT_DIR, config.TASK_NAMES[config.TASK].split(" ")[0], f"epoch_{epoch+1}")
         analyze_age_errors(
             all_preds_list, all_labels_list, all_probs_list,
             class_names=config.CLASSES[config.TASK],
@@ -414,7 +415,7 @@ def main():
                 avg_probs_per_class.append(np.zeros(num_classes))
         avg_probs_per_class = numpy.array(avg_probs_per_class)  # [num_classes, num_classes]
         numpy.save(os.path.join(epoch_analysis_dir, "avg_probs_matrix.npy"), avg_probs_per_class)
-        base_dir = os.path.join(config.OUTPUT_DIR, config.TASK_NAMES[config.TASK].replace(" ","_"))
+        base_dir = os.path.join(config.OUTPUT_DIR, config.TASK_NAMES[config.TASK].split(" ")[0])
         plot_prob_evolution(base_dir, config.CLASSES[config.TASK])
 
         tracker.save_confusion_matrices(epoch)

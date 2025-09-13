@@ -4,7 +4,7 @@
     "TASK"   : 2,
     "MODEL_TYPE" : "google/siglip2-large-patch16-384",
 
-    "NUM_VISUAL_PROMPT" : 10,
+    "NUM_VISUAL_PROMPT" : 6,
     "NUM_TEXT_CNTX" : 0,
     "TASK_NAMES": ["age estimation from face picture", "gender recognition from facial features", "emotion classification from facial expression"], 
     "CLASSES": [
@@ -30,7 +30,7 @@
     "EMD_OMEGA" : 2.0,
     "EMD_MU": -0.0025,
 
-    "TEXT_FEATURES_PATH" : "../TRAIN/Siglip2/L16/coop/Emotion/ckpt/text_features_bval.pt",
+    "TEXT_FEATURES_PATH" : "../TRAIN/Siglip2/L16/coop/Emotion/text_features_bval.pt",
     "FINE_TUNE_TF": false,
 
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
