@@ -1,9 +1,8 @@
 {
     "TUNING" : "vpt",
     "MODEL"  : "pecore",
-    "TASK"   : 0,
+    "TASK"   : 2,
     "MODEL_TYPE" : "PE-Core-L14-336",
-
     "NUM_VISUAL_PROMPT" : 10,
     "NUM_TEXT_CNTX" : 0,
     "TASK_NAMES": ["age estimation from face picture", "gender recognition from facial features", "emotion classification from facial expression"], 
@@ -30,16 +29,16 @@
     "EMD_OMEGA" : 2.0,
     "EMD_MU": -0.0025,
 
-    "TEXT_FEATURES_PATH" : "../TRAIN/PECore/L14/coop/Age/ckpt/text_features_bval.pt",
-
+    "TEXT_FEATURES_PATH" : "../TRAIN/PECore/L14/coop/exp2/Emotion/ckpt/text_features_bval.pt",
+    "FINE_TUNE_TF": false,
 
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BATCH_SIZE" : 64,
     "NUM_WORKERS" : 4,
-    "LR" : 0.0002,
-    "OUTPUT_DIR" : "../TRAIN/PECore/L14/vpt/Age",
+    "LR" : 10e-4,
+    "OUTPUT_DIR" : "../TRAIN/PECore/L14/vpt/exp2/Emotion/",
     "VERBOSE": true,
     "USE_TQDM": false,
-    "EPOCHS" : 10,
+    "EPOCHS" : 20,
     "PATIENCE" : 4
 }
