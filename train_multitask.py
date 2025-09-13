@@ -1,9 +1,7 @@
 import os
 import sys
-import json
 import torch
 import shutil
-from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 import torchvision.transforms as T
 import matplotlib.pyplot as plt
@@ -14,16 +12,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import numpy as np
 import matplotlib.pyplot as plt
 import numpy
-import seaborn as sns
-import torch.nn.functional as F
-from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
-from wrappers.PerceptionEncoder.pe import PECore
-from wrappers.promptopt.prompt_learner import CustomModel
-from wrappers.SigLip2.SigLip2Model import Siglip2Model
-from wrappers.tokenizer import PETokenizer, SigLip2Tokenizer
-from transformers import AutoConfig, AutoTokenizer
 from training.loss import *
-from core.vision_encoder import transforms
 from utils.metric import MultitaskTracker
 from utils.configuration import Config
 from utils.running_mean import RunningMeans
@@ -60,7 +49,7 @@ def get_augmentation_transform(config, image_size):
         T.Resize((image_size, image_size)),
         T.RandomHorizontalFlip(p=0.5),
         T.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.05),
-        T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 0.4))], p=0.5),
+        T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8))], p=0.5),
         T.ToTensor()
     ]
 
@@ -442,7 +431,7 @@ def main():
 
     num_tasks = len(config.TASK_NAMES) if config.TASK == -1 else 1
     output_dir = config.OUTPUT_DIR
-    task_names = config.TASK_NAMES
+    task_names = config.TASK_NAMES.split(" ")[0]
     class_names = config.CLASSES
     tracker = MultitaskTracker(
         num_tasks=num_tasks,

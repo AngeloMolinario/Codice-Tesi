@@ -339,7 +339,7 @@ def main():
 
     # Metrics tracker
     output_dir = config.OUTPUT_DIR
-    task_names = [config.TASK_NAMES[config.TASK]]
+    task_names = [config.TASK_NAMES[config.TASK].split(" ")[0]]
     class_names = [config.CLASSES[config.TASK]]
     tracker = MultitaskTracker(
         num_tasks=1,

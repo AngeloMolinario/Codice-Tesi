@@ -155,7 +155,7 @@ def get_model(config):
                 config=AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            base_model.load_model(path="./hf_models/model.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
+            base_model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
             model = CoopModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 classes=config.CLASSES[config.TASK],
@@ -187,7 +187,7 @@ def get_model(config):
                 config=AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            base_model.load_model(path="./hf_models/model.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
+            base_model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
             model = CustomModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 tasknames=config.TASK_NAMES,
@@ -214,7 +214,7 @@ def get_model(config):
                 config = AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            model.load_model(path="./hf_models/model.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
+            model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
             return model
         
         else:

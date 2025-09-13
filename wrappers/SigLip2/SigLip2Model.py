@@ -144,7 +144,7 @@ class Siglip2Model(SiglipPreTrainedModel):
 
     def load_model(self, path, map_location, repo_id="google/siglip2-large-patch16-384", filename="model.safetensors"):
         # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
-
+        print(f"Path to load {path}")
         # Check if the file exists
         if not os.path.exists(path):
             print("Model not found. Downloading it from the hub...")
@@ -153,7 +153,8 @@ class Siglip2Model(SiglipPreTrainedModel):
             # Convert the model to .pth format
             safetensors_to_pth(sf_path, output_dir=os.path.dirname(path), repo_id=repo_id)
         # Load the model
-        state_dict = torch.load(os.path.join(os.path.dirname(path), repo_id.split("/")[-1].replace("-","_") + ".pt"), map_location=map_location)
+        print(f"Loading the model from path {os.path.normpath(path)}")
+        state_dict = torch.load(path, map_location=map_location)
         result = self.load_state_dict(state_dict, strict=False)
         
         # Check for missing or mismatching keys during the loading of the state_dict
