@@ -36,8 +36,7 @@ class VisionTransformer(nn.Module):
         output_dim: Optional[int] = 1280,
         attn_pooler_heads: int = 8,
         pool_type: Literal["attn", "tok", "avg", "none"] = "attn",
-        num_prompt: int = 0,  # Number of context prompt tokens to be prepended
-        deep_prompt: bool = False,
+        num_prompt: int = 0  # Number of context prompt tokens to be prepended        
     ):
         super().__init__()
         assert pool_type in ("attn", "tok", "avg", "none")
@@ -56,7 +55,6 @@ class VisionTransformer(nn.Module):
         self.image_size = image_size
 
         self.num_prompt = num_prompt  # Number of prompt tokens, can be adjusted as needed
-        self.deep_prompt = deep_prompt
 
         self.conv1 = nn.Conv2d(
             in_channels=3,
@@ -109,19 +107,7 @@ class VisionTransformer(nn.Module):
         # Prompt tuning learnable parameters
         if self.num_prompt > 0:
             logger.info(f"Using {self.num_prompt} prompt tokens.")
-            if self.deep_prompt:
-                self.prompt_learner = nn.ModuleList(
-                    [
-                        VisionPromptLearner(
-                            self.num_prompt, self.width, self.use_cls_token
-                        )
-                        for _ in range(self.layers)
-                    ]
-                )
-            else:
-                self.prompt_learner = VisionPromptLearner(
-                    self.num_prompt, self.width, self.use_cls_token
-                )
+            self.prompt_learner = VisionPromptLearner(self.num_prompt, self.width, self.use_cls_token)
         else:
             logger.info("No prompt tokens used.")
             self.prompt_learner = None
@@ -205,7 +191,6 @@ class VisionTransformer(nn.Module):
             "attn_pooler_heads": self.attn_pooler_heads,
             "pool_type": self.pool_type,
             "num_prompt": self.num_prompt,  # Number of prompt tokens
-            "deep_prompt": self.deep_prompt,
         }
         return config
     @classmethod
@@ -295,27 +280,15 @@ class VisionTransformer(nn.Module):
         if self.use_abs_posemb:
             x = x + self._sample_abs_posemb(grid_h, grid_w)
         
-        if self.num_prompt > 0 and not self.deep_prompt:
+        if self.num_prompt > 0:
             x = self.prompt_learner(x)
 
         if self.use_rope2d:
             self.rope.update_grid(x.device, grid_h, grid_w)
 
         x = self.ln_pre(x)
-
-        if self.num_prompt > 0 and self.deep_prompt:
-            stop_idx = (self.layers + layer_idx) % self.layers
-            # Mirror the standard transformer, inserting and stripping prompts per block
-            for i, (block, vpt) in enumerate(
-                zip(self.transformer.resblocks, self.prompt_learner)
-            ):
-                x = vpt(x)
-                x = block(x)
-                x = x[:, self.num_prompt:, :]
-                if i == stop_idx:
-                    break
-        else:
-            x = self.transformer(x, layer_idx=layer_idx)
+    
+        x = self.transformer(x, layer_idx=layer_idx)
 
         if norm:
             x = self.ln_post(x)

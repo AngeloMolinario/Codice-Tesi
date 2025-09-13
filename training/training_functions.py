@@ -142,12 +142,7 @@ def get_model(config):
     model_name = config.MODEL.lower()
     if tuning == 'coop':
         if model_name == "pecore":
-            base_model = PECore.from_config(
-                config.MODEL_TYPE,
-                pretrained=True,
-                num_prompt=config.NUM_VISUAL_PROMPT,
-                deep_prompt=getattr(config, "DEEP_PROMPT", False),
-            )
+            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
             model = CoopModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 classes=config.CLASSES[config.TASK],
@@ -176,9 +171,7 @@ def get_model(config):
             base_model = PECore.from_config(
                 config.MODEL_TYPE,
                 pretrained=True,
-                num_prompt=config.NUM_VISUAL_PROMPT,
-                deep_prompt=getattr(config, "DEEP_PROMPT", False),
-            )
+                num_prompt=config.NUM_VISUAL_PROMPT)
             model = CustomModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 tasknames=config.TASK_NAMES,
@@ -212,8 +205,7 @@ def get_model(config):
             model = PECore.from_config(
                 config.MODEL_TYPE,
                 pretrained=True,
-                num_prompt=config.NUM_VISUAL_PROMPT,
-                deep_prompt=getattr(config, "DEEP_PROMPT", False),
+                num_prompt=config.NUM_VISUAL_PROMPT
             )
             return model
         

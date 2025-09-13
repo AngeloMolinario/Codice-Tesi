@@ -42,7 +42,7 @@ class Siglip2Model(SiglipPreTrainedModel):
 
     config: SiglipConfig
 
-    def __init__(self, config: SiglipConfig, num_prompts: int = 0, deep_prompt: bool = False):
+    def __init__(self, config: SiglipConfig, num_prompts: int = 0):
         super().__init__(config)
 
         if not isinstance(config.text_config, SiglipTextConfig):
@@ -66,14 +66,10 @@ class Siglip2Model(SiglipPreTrainedModel):
         text_config = config.text_config
         vision_config = config.vision_config
         self.image_size = vision_config.image_size
-        self.deep_prompt = deep_prompt
-        self.num_prompt = num_prompts
         # Initialize the text and vision models with the number of prompts
         self.text_model = SiglipTextModel(text_config)
         # If num prompt is 0 than the model is the pure baseline
-        self.vision_model = SiglipVisionModel(
-            vision_config, num_prompt=num_prompts, deep_prompt=deep_prompt
-        )
+        self.vision_model = SiglipVisionModel(vision_config, num_prompt=num_prompts)
 
 
         # Added to maintain the backward compatibility for the weights loading
@@ -122,7 +118,7 @@ class Siglip2Model(SiglipPreTrainedModel):
         visual_sd = self.vision_model.state_dict()
         out_sd = {}
         for k, v in visual_sd.items():
-            if k.startswith("prompt_learner") or k.startswith("encoder.deep_prompt_embeddings"):
+            if k.startswith("prompt_learner"):
                 continue
             out_sd[f"vision_model.{k}"] = v.detach().cpu()
         # Add scale/bias
@@ -136,18 +132,16 @@ class Siglip2Model(SiglipPreTrainedModel):
     def save_vpt_token(self, save_path):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         if hasattr(self.vision_model, 'prompt_learner') and self.vision_model.prompt_learner is not None:
-            state_dict = {'prompt_learner': self.vision_model.prompt_learner.state_dict()}
-            torch.save(state_dict, save_path)
-            print(f"VPT token saved in {save_path}")
-        elif hasattr(self.vision_model.encoder, 'deep_prompt_embeddings'):
             state_dict = {
-                'deep_prompt_embeddings': self.vision_model.encoder.deep_prompt_embeddings.detach().cpu()
+                'prompt_learner' : self.vision_model.prompt_learner.state_dict()
             }
             torch.save(state_dict, save_path)
-            print(f"Deep VPT tokens saved in {save_path}")
+            print(f"VPT token saved in {save_path}")
+
         else:
             print(f"Prompt learner not found in vision model, skipping save.")
-                
+
+
     def load_model(self, path, map_location, repo_id="google/siglip2-large-patch16-384", filename="model.safetensors"):
         # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
 
@@ -231,7 +225,7 @@ class Siglip2Vision(nn.Module):
 
     config: SiglipConfig
 
-    def __init__(self, config: SiglipConfig, num_prompt=0, deep_prompt: bool = False):
+    def __init__(self, config: SiglipConfig, num_prompt=0):
         super().__init__()
         vision_config = config.vision_config
         
@@ -246,12 +240,12 @@ class Siglip2Vision(nn.Module):
         config.torch_dtype = "float32"        
         config.vision_config.torch_dtype = "float32"
         self.config = config
+        self.config = config            
         self.num_prompt = num_prompt
-        self.deep_prompt = deep_prompt
         self.image_size = vision_config.image_size
-
+        
         # If num prompt is 0 than the model is the pure baseline
-        self.vision_model = SiglipVisionModel(vision_config, num_prompt=num_prompt, deep_prompt=deep_prompt)
+        self.vision_model = SiglipVisionModel(vision_config, num_prompt=num_prompt)
         
         # Added to maintain the backward compatibility for the weights loading        
         self.vision_model = self.vision_model.vision_model
@@ -274,7 +268,7 @@ class Siglip2Vision(nn.Module):
         visual_sd = self.vision_model.state_dict()
         out_sd = {}
         for k, v in visual_sd.items():
-            if k.startswith("prompt_learner") or k.startswith("encoder.deep_prompt_embeddings"):
+            if k.startswith("prompt_learner"):
                 continue
             out_sd[f"vision_model.{k}"] = v.detach().cpu()
         out_sd["logit_scale"] = self.logit_scale.detach().cpu()
@@ -382,20 +376,18 @@ class Siglip2Vision(nn.Module):
     def load_VPT_token(self, ckpt_path, device):
         checkpoint = torch.load(ckpt_path, map_location=device)
         if 'prompt_learner' in checkpoint:
+            # Inizializza un'istanza di VisionPromptLearner
             vpt = VisionPromptLearner(
                 emb_size=self.config.vision_config.hidden_size,
                 num_prompt=self.num_prompt,
-                is_cls_present=False,
+                is_cls_present=False
             )
+            # Carica i pesi salvati nel prompt learner
             vpt.load_state_dict(checkpoint['prompt_learner'])
+            # Aggiungi il prompt learner alla lista e spostalo sul dispositivo
             self._vpt.append(vpt.to(device))
             self.vision_model.prompt_learner = vpt.to(device)
             print(f"VPT token loaded from {ckpt_path}")
-        elif 'deep_prompt_embeddings' in checkpoint:
-            self.vision_model.encoder.deep_prompt_embeddings.data.copy_(
-                checkpoint['deep_prompt_embeddings']
-            )
-            print(f"Deep VPT token loaded from {ckpt_path}")
         else:
             print(f"No VPT token found in {ckpt_path}")
 
@@ -435,11 +427,7 @@ class Siglip2Vision(nn.Module):
                 vision_sd = {k: v for k, v in ckpt.items() if not k.startswith("text_model.")}
 
             # Exclude VPT if present
-            vision_sd = {
-                k: v
-                for k, v in vision_sd.items()
-                if not k.startswith("prompt_learner") and not k.startswith("encoder.deep_prompt_embeddings")
-            }
+            vision_sd = {k: v for k, v in vision_sd.items() if not k.startswith("prompt_learner")}
 
             result = self.vision_model.load_state_dict(vision_sd, strict=False)
         else:
