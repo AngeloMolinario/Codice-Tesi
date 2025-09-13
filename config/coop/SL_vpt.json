@@ -1,7 +1,7 @@
 {
     "TUNING" : "vpt",
     "MODEL"  : "Siglip2",
-    "TASK"   : 2,
+    "TASK"   : 0,
     "MODEL_TYPE" : "google/siglip2-large-patch16-384",
 
     "NUM_VISUAL_PROMPT" : 6,
@@ -30,16 +30,16 @@
     "EMD_OMEGA" : 2.0,
     "EMD_MU": -0.0025,
 
-    "TEXT_FEATURES_PATH" : "../TRAIN/Siglip2/L16/coop/Emotion/text_features_bval.pt",
+    "TEXT_FEATURES_PATH" : "../TRAIN/Siglip2/L16/coop/Age_ls/text_features_bval.pt",
     "FINE_TUNE_TF": false,
 
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BATCH_SIZE" : 64,
-    "NUM_WORKERS" : 4,
+    "NUM_WORKERS" : 12,
     "LR" : 10e-4,
-    "OUTPUT_DIR" : "../TRAIN/Siglip2/L16/vpt/Emotion",
+    "OUTPUT_DIR" : "../TRAIN/Siglip2/L16/vpt/Age_ls",
     "VERBOSE": true,
     "USE_TQDM": false,
     "EPOCHS" : 20,
-    "PATIENCE" : 4
+    "PATIENCE" : 5
 }

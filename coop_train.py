@@ -433,6 +433,8 @@ def main():
                         torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bval.pt"))
                 if config.NUM_VISUAL_PROMPT > 0:
                     model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
+                if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS:
+                    torch.save(model.logit_scale, os.path.join(config.OUTPUT_DIR, "ckpt/logit_scale_bval.pt"))
 
             if val_acc[0] > best_accuracy:
                 best_accuracy = val_acc[0]
@@ -443,6 +445,8 @@ def main():
                         torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bacc.pt"))
                 if config.NUM_VISUAL_PROMPT > 0:
                     model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bacc.pt"))
+                if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS:
+                    torch.save(model.logit_scale, os.path.join(config.OUTPUT_DIR, "ckpt/logit_scale_bacc.pt"))
 
             epochs_without_improvement = 0            
         else:
