@@ -300,17 +300,28 @@ def main():
 
     # Create optimizer
     params = []
+    coop_param = []
     total_trainable_params = 0
     for name, param in model.named_parameters():
         if any(trainable_param in name for trainable_param in config.NAMED_TRAINABLE_PARAMETERS):
             param.requires_grad = True
-            params += [param]
-            total_trainable_params += param.numel()
+            if 'visual' in name:
+                params += [param]
+                total_trainable_params += param.numel()
+            else:
+                coop_param += [param]
+                total_trainable_params += param.numel()
             print(f"Parameter: {name}, shape: {param.shape}, numel: {param.numel()}")
         else:
             param.requires_grad = False
-    optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=0.0)
 
+    optimizer = torch.optim.AdamW(
+            [
+                {"params": params, "lr": config.LR, "weight_decay": 0.0, "name": "vision_group"},
+                {"params": coop_param, "lr": config.LR * 0.1, "weight_decay": 0.0, "name": "coop_group"},
+            ],
+            foreach=True
+        )
     # GradScaler for mixed precision
     scaler = GradScaler(device=DEVICE)
     # CosineAnnealingLR scheduler
@@ -365,8 +376,9 @@ def main():
     os.makedirs(os.path.join(config.OUTPUT_DIR, task_names[0]), exist_ok=True)
     train_fn = single_task_train_fn
     val_fn = single_task_val_fn
-
-    if config.TUNING == "coop" or config.TUNING == "mixed":
+ 
+    '''
+    if config.TUNING == "coop" or config.TUNING == "mixed" or hasattr(config, "TEXT_FEATURES_PATH"):
         text_features = None
     else:
         text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
@@ -374,7 +386,8 @@ def main():
 
         #text_features = torch.split(text_features, (9,2,7))[config.TASK]
         print(f"text_features task shape {text_features.shape}")
-
+    '''
+    text_features = None
     model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
         
 
