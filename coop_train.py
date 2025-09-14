@@ -502,7 +502,7 @@ def main():
         plt.close()
 
     # Save the full model at the end of training
-    torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, "full_training_model.pt"))
+    #torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, "full_training_model.pt"))
 
 
 if __name__ == "__main__":
