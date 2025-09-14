@@ -431,7 +431,7 @@ def main():
 
     num_tasks = len(config.TASK_NAMES) if config.TASK == -1 else 1
     output_dir = config.OUTPUT_DIR
-    task_names = config.TASK_NAMES.split(" ")[0]
+    task_names = [task.split(" ")[0] for task in config.TASK_NAMES]
     class_names = config.CLASSES
     tracker = MultitaskTracker(
         num_tasks=num_tasks,

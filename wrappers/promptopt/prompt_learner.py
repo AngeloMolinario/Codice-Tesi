@@ -586,6 +586,25 @@ class CoopModel(nn.Module):
         text_features = self.get_text_features(normalize=normalize).detach().cpu()
         torch.save({'text_features': text_features}, text_features_path)
         print(f"[CoopCustomModel] Text features salvate in: {text_features_path} (shape: {text_features.shape})")
+    
+    def save_coop_token(self, save_path):
+        """
+        Salva i token del prompt learner per poterli riutilizzare in futuro.
+        """
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        torch.save(self.prompt_learner.state_dict(), save_path)
+        print(f"[CoopCustomModel] Coop token salvati in: {save_path}")
+
+    def load_coop_token(self, load_path):
+        """
+        Carica i token del prompt learner salvati in precedenza.
+        """
+        if not os.path.isfile(load_path):
+            raise FileNotFoundError(f"Il file {load_path} non esiste.")
+        state_dict = torch.load(load_path, map_location="cpu")
+        self.prompt_learner.load_state_dict(state_dict)
+        print(f"[CoopCustomModel] Coop token caricati da: {load_path}")
+
     def save_vpt_token(self, save_path):
         """
         Salva i token del prompt learner per poterli riutilizzare in futuro.

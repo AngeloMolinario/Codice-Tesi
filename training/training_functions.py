@@ -140,7 +140,7 @@ def get_model(config):
     ''' This method look at the configuration file and return the correct model initialized with pretrained weights and the specified attributes'''
     tuning = config.TUNING.lower()
     model_name = config.MODEL.lower()
-    if tuning == 'coop':
+    if tuning == 'coop' or hasattr(config, "PRETRAINED_COOP"):
         if model_name == "pecore":
             base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
             model = CoopModel(
