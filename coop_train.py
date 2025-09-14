@@ -248,6 +248,11 @@ def main():
 
     # Get the model
     model = get_model(config).to(DEVICE)
+    if hasattr(config, "PRETRAINED_CKPT"):
+        print(f"Loading pretrained checkpoint from {config.PRETRAINED_CKPT}")
+        model.load_coop_token(config.PRETRAINED_CKPT)
+        model.to(DEVICE)
+        print("Pretrained weights loaded.")
 
     # Save the vision model right after loading
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
@@ -435,6 +440,9 @@ def main():
                     model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
                 if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS:
                     torch.save(model.logit_scale, os.path.join(config.OUTPUT_DIR, "ckpt/logit_scale_bval.pt"))
+                if config.NUM_TEXT_CNTX > 0:
+                    model.save_coop_token(os.path.join(config.OUTPUT_DIR, "ckpt/coop_token_bval.pt"))
+                    print("Saved CoOp token for best validation loss.")
 
             if val_acc[0] > best_accuracy:
                 best_accuracy = val_acc[0]
@@ -447,7 +455,9 @@ def main():
                     model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bacc.pt"))
                 if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS:
                     torch.save(model.logit_scale, os.path.join(config.OUTPUT_DIR, "ckpt/logit_scale_bacc.pt"))
-
+                if config.NUM_TEXT_CNTX > 0:
+                    model.save_coop_token(os.path.join(config.OUTPUT_DIR, "ckpt/coop_token_bacc.pt"))
+                    print("Saved CoOp token for best validation accuracy.")
             epochs_without_improvement = 0            
         else:
             epochs_without_improvement += 1
