@@ -30,7 +30,7 @@ from transformers import AutoConfig, AutoTokenizer
 from wrappers.tokenizer import *
 from tqdm import tqdm
 from training.training_functions import  *
-
+import time
 
 def get_loss_fn(config, weights=None):    
     task = int(config.TASK)
@@ -248,9 +248,9 @@ def main():
 
     # Get the model
     model = get_model(config).to(DEVICE)
-    if hasattr(config, "PRETRAINED_CKPT"):
-        print(f"Loading pretrained checkpoint from {config.PRETRAINED_CKPT}")
-        model.load_coop_token(config.PRETRAINED_CKPT)
+    if hasattr(config, "PRETRAINED_COOP"):
+        print(f"Loading pretrained checkpoint from {config.PRETRAINED_COOP}")
+        model.load_coop_token(config.PRETRAINED_COOP)
         model.to(DEVICE)
         print("Pretrained weights loaded.")
 
@@ -396,8 +396,12 @@ def main():
 
         ################## TRAINING LOOP ##################
         print(f"\n[Epoch {epoch+1} - TRAIN]", flush=True)
+        start_time = time.time()
         train_loss, train_acc = train_fn(model, train_loader, optimizer, loss_fn, DEVICE, config, text_features, scaler)
-        print(f"  Task '{task_names[0]}': Loss = {train_loss[0]:.4f}, Accuracy = {train_acc[0]:.4f}")
+        end_time = time.time()
+        epoch_duration = end_time - start_time
+        formatted = time.strftime("%H:%M:%S", time.gmtime(epoch_duration)) + f".{int((epoch_duration % 1) * 100):02d}"
+        print(f"  Task '{task_names[0]}': Loss = {train_loss[0]:.4f}, Accuracy = {train_acc[0]:.4f} - Duration: {formatted}")
 
         print(f" New logit scale {model.logit_scale.item()} - exp = {model.logit_scale.exp().item()} - bias {model.logit_bias.item()if hasattr(model, 'logit_bias') else 0.0}")
         tracker.update_loss(0, train_loss[0], train=True)
@@ -406,8 +410,12 @@ def main():
 
         ################## VALIDATION LOOP ##################
         print(f"\n[Epoch {epoch+1} - VAL]", flush=True)
+        start_time = time.time()
         val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, config, model.get_text_features(normalize=True) if text_features is None else text_features)
-        print(f"  Task '{task_names[0]}': Loss = {val_loss[0]:.4f}, Accuracy = {val_acc[0]:.4f}")
+        end_time = time.time()
+        epoch_duration = end_time - start_time
+        formatted = time.strftime("%H:%M:%S", time.gmtime(epoch_duration)) + f".{int((epoch_duration % 1) * 100):02d}"
+        print(f"  Task '{task_names[0]}': Loss = {val_loss[0]:.4f}, Accuracy = {val_acc[0]:.4f} - Duration: {formatted}")
         tracker.update_loss(0, val_loss[0], train=False)
         tracker.update_accuracy(0, val_acc[0], train=False)
         tracker.update_confusion(0, all_preds_list[0], all_labels_list[0], epoch)
