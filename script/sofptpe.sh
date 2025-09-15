@@ -3,17 +3,17 @@
 echo "#######################################################################"
 echo "##                  TRAINING EMOTION ON COOP 15                      ##"
 echo "#######################################################################"
-python3 coop_train.py config/softpe_15.json
+python3 train_multitask.py config/softpe_15.json
 
 echo "#######################################################################"
 echo "##                  TRAINING EMOTION ON COOP 20                      ##"
 echo "#######################################################################"
-python3 coop_train.py config/softpe_20.json
+python3 train_multitask.py config/softpe_20.json
 
 echo "#######################################################################"
 echo "##                  TRAINING EMOTION ON COOP 25                      ##"
 echo "#######################################################################"
-python3 coop_train.py config/softpe_25.json
+python3 train_multitask.py config/softpe_25.json
 
 echo "#######################################################################"
 echo "##                        TRAINING COMPLETED                         ##"
