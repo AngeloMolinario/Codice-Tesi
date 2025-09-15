@@ -300,7 +300,7 @@ class PECore_Vision(nn.Module):
             device (torch.device): Dispositivo su cui caricare il modello.
         """
         # Scegli la sorgente: se esiste un file locale usa quello, altrimenti il checkpoint di default
-        path = ckpt_path if (ckpt_path is not None and os.path.exists(ckpt_path)) else fetch_pe_checkpoint("PE-Core-B16-224")
+        path = ckpt_path if (ckpt_path is not None and os.path.exists(ckpt_path)) else fetch_pe_checkpoint("PE-Core-L14-336")
 
         _sd = torch.load(path, map_location=device)
         if isinstance(_sd, dict) and ("state_dict" in _sd or "weights" in _sd):
