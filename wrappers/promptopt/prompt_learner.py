@@ -480,6 +480,19 @@ class CustomModel(nn.Module):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         torch.save(self.state_dict(), save_path)
         print(f"[CustomModel] Modello completo salvato per training in: {save_path}")
+    
+    def save_softCPT_token(self, save_path):
+        """
+        Salva i token del prompt learner e del task prompt learner per poterli riutilizzare in futuro.
+        """
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        torch.save({
+            'prompt_learner': self.prompt_learner.state_dict(),
+            'task_prompt_learner': self.task_prompt_learner.state_dict(),
+            'class_prompt_learner': self.class_prompt_learner.state_dict() if self.cls_spc else None,
+            'prompt_gen': self.prompt_gen.state_dict()
+        }, save_path)
+        print(f"[CustomModel] SoftCPT token salvati in: {save_path}")
 
 class CoopModel(nn.Module):
     def __init__(self, n_ctx, classes, model, tokenizer):

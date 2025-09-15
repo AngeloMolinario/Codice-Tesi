@@ -605,6 +605,7 @@ def main():
                     model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bval.pt"))
                     if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
                         model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
+                model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="softCPT_tokens.bval.pt")
 
             if sum(val_acc)/num_tasks > best_accuracy:
                 best_accuracy = sum(val_acc)/num_tasks
@@ -619,6 +620,7 @@ def main():
                     model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bacc.pt"))
                     if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
                         model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bacc.pt")
+                model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="softCPT_tokens.bacc.pt")
 
             epochs_without_improvement = 0
         else:
