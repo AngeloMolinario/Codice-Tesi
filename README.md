@@ -1,106 +1,73 @@
-# 🧠 Prompt-Optimized Vision-Language Models for Facial Attribute Recognition
+# CLAUDE.md
 
-This repository contains the official implementation of the thesis:  
-**"Prompt Optimization Technique for VLM in a Multitask Classification Problem"**
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
----
+## Project Overview
 
-## 🚀 Overview
+This is a research codebase for **"Prompt Optimization Technique for VLM in a Multitask Classification Problem"** - a thesis focused on adapting pretrained Vision-Language Models (VLMs) for facial attribute recognition tasks (gender, age, emotion).
 
-This thesis focuses on adapting a pretrained Vision-Language Model (VLM) to a **multitask classification problem**, aimed at recognizing **gender**, **age**, and **emotion** from facial images.
-
-The main focus is **prompt optimization** — both **textual** and **visual** — to guide the model’s attention to the most relevant features for each task.  
-Through prompt tuning, the model can be adapted in a **parameter-efficient** way without modifying its internal weights, leveraging the knowledge gained during pre-training.
-
----
-
-## 🛠️ Methodology
-
-The project develops a multitask model for gender, age, and emotion classification using state-of-the-art VLMs such as:
-
+The project implements prompt optimization techniques for two VLM architectures:
 - **SigLIP2**
 - **Perception Encoder Core (PE-Core)**
 
-### Key Approach:
-**Prompt optimization techniques** to specialize pretrained models, avoiding full fine-tuning which is computationally expensive.
+## Core Architecture
 
-We explore two complementary strategies:
+### Main Training Scripts
+- `coop_train.py` - Single-task prompt tuning with CoOp/VPT methods
+- `train_multitask.py` - Multi-task training with shared prompts across tasks
+- `test_new.py` - Comprehensive testing and evaluation script
 
----
+### Key Directories
+- `core/` - Core VLM implementations and vision encoders
+- `wrappers/` - Model wrappers for SigLIP2, PE-Core, and prompt optimization
+- `training/` - Loss functions, training utilities, and optimization logic
+- `utils/` - Configuration management, metrics tracking, and utilities
+- `dataset/` - Dataset classes and data loading functionality
+- `config/` - JSON configuration files for different experimental setups
+- `script/` - Shell scripts for running experiments and tests
 
-### ✍️ Textual Prompt Tuning (SoftCPT)
+### Dependencies
+Install required packages:
+```bash
+pip install -r requirements.txt
+```
+## Dataset Configuration
 
-SoftCPT focuses on **tuning the textual encoder**.
+Datasets are configured via the `DATASET_NAMES` field in config files:
+- Task -1: Multi-task (FairFace, RAF-DB, CelebA_HQ, Lagenda)
+- Task 0: Age (FairFace, Lagenda)
+- Task 1: Gender (FairFace, RAF-DB, CelebA_HQ, Lagenda)
+- Task 2: Emotion (RAF-DB)
 
-- A **shared meta-network** (text encoder + MLP) generates **task-specific continuous prompts**.
-- The task description (e.g., _"Classify the person’s gender"_) is encoded.
-- Learnable continuous vectors are concatenated with this embedding.
-- The final prompt is used with class embeddings during classification.
+Default dataset root: `../processed_datasets/datasets_with_standard_labels`
 
-**Mode:**  
-- **Class-Agnostic Task-Specific (CATS)**: context vectors are generated from task descriptions and shared across all classes of that task.
+## Task Classification
 
----
+The system supports 3 classification tasks:
+- **Age**: 9 age groups (0-2, 3-9, 10-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70+)
+- **Gender**: Binary (male, female)
+- **Emotion**: 7 emotions (surprise, fear, disgust, happy, sad, angry, neutral)
 
-### 🖼️ Visual Prompt Tuning (VPT)
+## Prompt Tuning Methods
 
-VPT focuses on **tuning the visual encoder**. We explore two modes:
+### Visual Prompt Tuning (VPT)
+- `NUM_VISUAL_PROMPT` parameter controls number of visual prompts
 
-#### VPT Task-Agnostic:
-- One set of learnable visual prompts shared across **all tasks** and **all classes**.
-- Efficient when tasks are strongly correlated.
-- Single forward pass per input → faster inference.
+### Textual Prompt Tuning (SoftCPT)
+- `NUM_TEXT_CNTX` parameter controls text context length
 
-#### VPT Task-Specific (VPT-TS):
-- Different visual prompts **per task**, shared across classes.
-- Better performance for weakly correlated tasks.
-- Requires multiple forward passes (one per task) → more computationally expensive.
+### Context Optimization
+- `NUM_TEXT_CNTX` paraemter controls text context length in single task scenario
 
----
+## Model Wrappers
 
-### 🧪 Experimental Setup
+- `wrappers/SigLip2/` - SigLIP2 model implementation
+- `wrappers/PerceptionEncoder/` - PE-Core model wrapper
+- `wrappers/promptopt/` - Prompt optimization utilities
 
-All evaluations are performed on **unseen test data**.  
-Each experiment is repeated across the selected models, and compared to a **zero-shot baseline**.
+## Loss Functions
 
-#### Experiments:
-- **SoftCPT-CATS**: Class-Agnostic Task-Specific textual prompt tuning.
-- **VPT Task-Agnostic**: Shared visual prompts across all tasks.
-- **VPT-TS**: Task-specific visual prompts (different per task).
-
-#### Optional:
-- **V2PT (Visual Variational Autoencoder Prompt Tuning)**  
-  - Prompt vectors = [learned prompts] + [VAE-generated dynamic prompts].
-
----
-
-## 📈 Evaluation Metrics
-
-- **Task Accuracy**: Correct predictions / Total samples.
-- **Added Parameters**: Extra parameters introduced by prompt tuning.
-- **Latency**: Inference time per image or batch.
-
----
-
-## 📚 Datasets
-
-| Dataset         | Description |
-|----------------|-------------|
-| **CelebA-HQ**   | 30,000 celebrity face images with gender labels. |
-| **LFW**         | 13,233 face images from 5,749 people; gender labels. |
-| **RAF-DB**      | 29,672 facial images with expression labels. |
-| **VGGFace2 Test** | 70,909 images from 207 individuals, labeled for age and gender. |
-| **UTKFace**     | 24,102 real-world facial images labeled with age and gender. |
-| **FairFace Test** | 10,954 balanced images across ethnicities with age and gender labels. |
-
----
-
-## 💡 Demonstrator
-
-We aim to integrate the trained model into a **face detection pipeline**, enhancing it with:
-
-- **Gender classification**
-- **Age estimation**
-- **Emotion recognition**
-
----
+Located in `training/loss.py`:
+- `OrdinalAgeLossEMD` - Earth Mover's Distance loss for age estimation
+- `CrossEntropyLoss` - Standard classification loss for gender/emotion
+- `MaskedLoss` - Handles missing labels in multi-task scenarios
