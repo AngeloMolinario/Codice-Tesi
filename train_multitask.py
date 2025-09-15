@@ -595,10 +595,10 @@ def main():
         tracker.plot_losses()
         tracker.plot_accuracy()
         tracker.save()        
-        if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
-            if val_loss[-1] < best_val_loss:
-                write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_val_loss.txt"), f"{best_val_loss:.4f} -> {val_loss[0]:.4f} at epoch {epoch+1}\n")
-                best_val_loss = val_loss[-1]
+        if sum(val_loss[:-1]) < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
+            if sum(val_loss[:-1]) < best_val_loss:
+                write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_val_loss.txt"), f"{best_val_loss:.4f} -> {sum(val_loss[:-1]):.4f} at epoch {epoch+1}\n")
+                best_val_loss = sum(val_loss[:-1])
 
             if sum(val_acc)/num_tasks > best_accuracy:
                 write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_accuracy.txt"), f"{best_accuracy:.4f} -> {sum(val_acc)/num_tasks:.4f} at epoch {epoch+1}\n")
