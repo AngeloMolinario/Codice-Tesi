@@ -225,6 +225,9 @@ def plot_prob_evolution(base_dir, class_names, upto_epoch=None):
     plt.savefig(os.path.join(base_dir, "prob_evolution_correct.png"))
     plt.close()
 
+def write_to_file(file_path, content):
+    with open(file_path, 'w') as f:
+        f.write(content)
 
 def main():
     # ------------------ REPRODUCIBILITY ------------------
@@ -455,6 +458,7 @@ def main():
 
         if val_loss[0] < best_val_loss or val_acc[0] > best_accuracy:
             if val_loss[0] < best_val_loss:
+                write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_val_loss.txt"), f"{best_val_loss:.4f} -> {val_loss[0]:.4f} at epoch {epoch+1}\n")
                 best_val_loss = val_loss[0]
                 print(f"New best validation loss: {best_val_loss:.4f}. Saving artifacts...")
                 if text_features is None:
@@ -470,6 +474,7 @@ def main():
                     print("Saved CoOp token for best validation loss.")
 
             if val_acc[0] > best_accuracy:
+                write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_accuracy.txt"), f"{best_accuracy:.4f} -> {val_acc[0]:.4f} at epoch {epoch+1}\n")
                 best_accuracy = val_acc[0]
                 print(f"New best validation accuracy: {best_accuracy:.4f}. Saving artifacts...")
                 if text_features is None:
