@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import torch
 import shutil
 from torch.utils.data import DataLoader
@@ -17,6 +18,7 @@ from utils.metric import MultitaskTracker
 from utils.configuration import Config
 from utils.running_mean import RunningMeans
 from tqdm import tqdm
+import time
 from training.training_functions import *
 
 
@@ -494,7 +496,7 @@ def main():
         for i in range(num_tasks):
             w_i = running_mean.get_by_index(i)
             if w_i is None:
-                w_i=1.0
+                w_i=data_task_weight[i]
             w.append((1.0 / max(w_i, 1e-8)))
         max_raw = sum(w)/len(w)#max(w)
         task_weight = torch.tensor([r / max_raw for r in w], device=DEVICE)
@@ -503,6 +505,7 @@ def main():
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")
         weights_history.append(task_weight.cpu().numpy())
 
+        start_time = time.time()
         train_loss, train_acc = train_fn(
             model,
             train_loader,
@@ -514,13 +517,15 @@ def main():
             config,
             text_features if config.TUNING.lower()!="softcpt" else None,
             scaler)
-        
+        end_time = time.time()
+        epoch_time = end_time - start_time
+        formatted = time.strftime("%H:%M:%S", time.gmtime(epoch_time)) + f".{int((epoch_time % 1) * 100):02d}"
         running_mean.plot(os.path.join(config.OUTPUT_DIR, "running_mean_train.png"))
         for t in range(num_tasks):
             print(f"  Task '{task_names[t]}': Loss = {train_loss[t]:.4f}, Accuracy = {train_acc[t]:.4f}")
             tracker.update_loss(t, train_loss[t], train=True)
             tracker.update_accuracy(t, train_acc[t], train=True)
-        print(f"  Total Loss: {sum(train_loss[:-1]):.4f}, Total weighted loss {train_loss[-1]:.4f}, Mean Accuracy : {sum(train_acc)/num_tasks:.4f}")        
+        print(f"  Total Loss: {sum(train_loss[:-1]):.4f}, Total weighted loss {train_loss[-1]:.4f}, Mean Accuracy : {sum(train_acc)/num_tasks:.4f} - Time: {formatted}")        
 
         if hasattr(model, 'logit_scale'):
             print(f"Logit scale: {model.logit_scale.item()} - exp({model.logit_scale.exp().item()})")
@@ -536,6 +541,7 @@ def main():
         if config.TUNING.lower() == 'softcpt':
             text_features = model.get_text_features(normalize=True)
 
+        start_time = time.time()
         val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(
             model,
             val_loader,
@@ -545,7 +551,10 @@ def main():
             config,
             text_features
         )
-
+        end_time = time.time()
+        epoch_time = end_time - start_time
+        formatted = time.strftime("%H:%M:%S", time.gmtime(epoch_time)) + f".{int((epoch_time % 1) * 100):02d}"
+        print(f"  Validation Time: {formatted}")
         for t in range(num_tasks):
             print(f"  Task '{task_names[t]}': Loss = {val_loss[t]:.4f}, Accuracy = {val_acc[t]:.4f}")
             tracker.update_loss(t, val_loss[t], train=False)
