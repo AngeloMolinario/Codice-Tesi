@@ -41,35 +41,35 @@ echo "#######################################################################"
 python3 test_new.py --model_type "PECoreVPT" \
                     --num_prompt 0 \
                     --dataset_path "../processed_datasets/datasets_with_standard_labels/RAF-DB" \
-                    --ckpt_dir "../TRAIN/PECore/L14/coop/Age_cntx_15/ckpt/"
-                    --batch_size 128
+                    --ckpt_dir "../TRAIN/PECore/L14/coop/Age_cntx_15/ckpt/" \
+                    --batch_size 128 --no_tqdm
 echo "#######################################################################"
 python3 test_new.py --model_type "PECoreVPT" \
                     --num_prompt 0 \
                     --dataset_path "../processed_datasets/datasets_with_standard_labels/RAF-DB" \
-                    --ckpt_dir "../TRAIN/PECore/L14/coop/Age_cntx_20/ckpt/"
-                    --batch_size 128
+                    --ckpt_dir "../TRAIN/PECore/L14/coop/Age_cntx_20/ckpt/" \
+                    --batch_size 128 --no_tqdm
 echo "#######################################################################"
 python3 test_new.py --model_type "PECoreVPT" \
                     --num_prompt 0 \
                     --dataset_path "../processed_datasets/datasets_with_standard_labels/RAF-DB" \
-                    --ckpt_dir "../TRAIN/PECore/L14/coop/Age_cntx_25/ckpt/"
-                    --batch_size 128
+                    --ckpt_dir "../TRAIN/PECore/L14/coop/Age_cntx_25/ckpt/" \
+                    --batch_size 128 --no_tqdm
 echo "#######################################################################"
 python3 test_new.py --model_type "PECoreVPT" \
                     --num_prompt 10 \
                     --dataset_path "../processed_datasets/datasets_with_standard_labels/RAF-DB" \
-                    --ckpt_dir "../TRAIN/PECore/L14/vpt/Age_cntx_15_vpt_10/"
-                    --batch_size 128
+                    --ckpt_dir "../TRAIN/PECore/L14/vpt/Age_cntx_15_vpt_10/ckpt/" \
+                    --batch_size 128 --no_tqdm
 echo "#######################################################################"
 python3 test_new.py --model_type "PECoreVPT" \
                     --num_prompt 10 \
                     --dataset_path "../processed_datasets/datasets_with_standard_labels/RAF-DB" \
-                    --ckpt_dir "../TRAIN/PECore/L14/vpt/Age_cntx_20_vpt_10/"
-                    --batch_size 128
+                    --ckpt_dir "../TRAIN/PECore/L14/vpt/Age_cntx_20_vpt_10/ckpt/" \
+                    --batch_size 128 --no_tqdm
 echo "#######################################################################"
 python3 test_new.py --model_type "PECoreVPT" \
                     --num_prompt 10 \
                     --dataset_path "../processed_datasets/datasets_with_standard_labels/RAF-DB" \
-                    --ckpt_dir "../TRAIN/PECore/L14/vpt/Age_cntx_25_vpt_10/"
-                    --batch_size 128
+                    --ckpt_dir "../TRAIN/PECore/L14/vpt/Age_cntx_25_vpt_10/ckpt/" \
+                    --batch_size 128 --no_tqdm
