@@ -1,5 +1,3 @@
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
 This is a research codebase for **"Prompt Optimization Technique for VLM in a Multitask Classification Problem"** - a thesis focused on adapting pretrained Vision-Language Models (VLMs) for facial attribute recognition tasks (gender, age, emotion).
