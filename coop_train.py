@@ -285,7 +285,7 @@ def main():
     )
 
     # Get the loss function
-    weights = training_set.get_class_weights(config.TASK, 'default').to(DEVICE)
+    weights = training_set.get_class_weights(config.TASK, 'normalized_inverse_sqrt').to(DEVICE)
 
 
 
