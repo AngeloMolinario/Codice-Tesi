@@ -3,8 +3,8 @@
     "MODEL"  : "pecore",
     "TASK"   : 2,
     "MODEL_TYPE" : "PE-Core-L14-336",
-    "NUM_VISUAL_PROMPT" : 30,
-    "NUM_TEXT_CNTX" : 25,
+    "NUM_VISUAL_PROMPT" : 15,
+    "NUM_TEXT_CNTX" : 20,
     "TASK_NAMES": ["age estimation from face picture", "gender recognition from facial features", "emotion classification from facial expression"], 
     "CLASSES": [
         ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
@@ -30,13 +30,13 @@
     "EMD_OMEGA" : 2.0,
     "EMD_MU": -0.0025,
 
-    "PRETRAINED_COOP" : "../TRAIN/PECore/L14/coop/Emotion_cntx_25/ckpt/coop_token_bval.pt",
+    "PRETRAINED_COOP" : "../TRAIN/PECore/L14/coop/Emotion_cntx_20/ckpt/coop_token_bval.pt",
 
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BATCH_SIZE" : 64,
     "NUM_WORKERS" : 12,
     "LR" : 2e-3,
-    "OUTPUT_DIR" : "../TRAIN/PECore/L14/vpt/Emotion_cntx_25_vpt_30/",
+    "OUTPUT_DIR" : "../TRAIN/PECore/L14/vpt/Emotion_cntx_20_vpt_10/",
     "VERBOSE": true,
     "USE_TQDM": false,
     "EPOCHS" : 20,
