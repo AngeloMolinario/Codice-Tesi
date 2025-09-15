@@ -305,11 +305,15 @@ def main():
     for name, param in model.named_parameters():
         if any(trainable_param in name for trainable_param in config.NAMED_TRAINABLE_PARAMETERS):
             param.requires_grad = True
-            if 'visual' in name:
-                params += [param]
-                total_trainable_params += param.numel()
+            if hasattr(config, "PRETRAINED_COOP"):
+                if 'visual' in name:
+                    params += [param]
+                    total_trainable_params += param.numel()
+                else:
+                    coop_param += [param]
+                    total_trainable_params += param.numel()
             else:
-                coop_param += [param]
+                params += [param]
                 total_trainable_params += param.numel()
             print(f"Parameter: {name}, shape: {param.shape}, numel: {param.numel()}")
         else:
