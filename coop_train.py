@@ -459,35 +459,23 @@ def main():
         if val_loss[0] < best_val_loss or val_acc[0] > best_accuracy:
             if val_loss[0] < best_val_loss:
                 write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_val_loss.txt"), f"{best_val_loss:.4f} -> {val_loss[0]:.4f} at epoch {epoch+1}\n")
-                best_val_loss = val_loss[0]
-                print(f"New best validation loss: {best_val_loss:.4f}. Saving artifacts...")
-                if text_features is None:
-                    with torch.inference_mode():
-                        text_features_to_save = model.get_text_features(normalize=True)
-                        torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bval.pt"))
-                if config.NUM_VISUAL_PROMPT > 0:
-                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
-                if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS:
-                    torch.save(model.logit_scale, os.path.join(config.OUTPUT_DIR, "ckpt/logit_scale_bval.pt"))
-                if config.NUM_TEXT_CNTX > 0:
-                    model.save_coop_token(os.path.join(config.OUTPUT_DIR, "ckpt/coop_token_bval.pt"))
-                    print("Saved CoOp token for best validation loss.")
-
+                best_val_loss = val_loss[0]                
             if val_acc[0] > best_accuracy:
                 write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_accuracy.txt"), f"{best_accuracy:.4f} -> {val_acc[0]:.4f} at epoch {epoch+1}\n")
                 best_accuracy = val_acc[0]
-                print(f"New best validation accuracy: {best_accuracy:.4f}. Saving artifacts...")
-                if text_features is None:
-                    with torch.inference_mode():
-                        text_features_to_save = model.get_text_features(normalize=True)
-                        torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bacc.pt"))
-                if config.NUM_VISUAL_PROMPT > 0:
-                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bacc.pt"))
-                if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS:
-                    torch.save(model.logit_scale, os.path.join(config.OUTPUT_DIR, "ckpt/logit_scale_bacc.pt"))
-                if config.NUM_TEXT_CNTX > 0:
-                    model.save_coop_token(os.path.join(config.OUTPUT_DIR, "ckpt/coop_token_bacc.pt"))
-                    print("Saved CoOp token for best validation accuracy.")
+            
+            if text_features is None:
+                with torch.inference_mode():
+                    text_features_to_save = model.get_text_features(normalize=True)
+                    torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bval.pt"))
+            if config.NUM_VISUAL_PROMPT > 0:
+                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
+            if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS:
+                torch.save(model.logit_scale, os.path.join(config.OUTPUT_DIR, "ckpt/logit_scale_bval.pt"))
+            if config.NUM_TEXT_CNTX > 0:
+                model.save_coop_token(os.path.join(config.OUTPUT_DIR, "ckpt/coop_token_bval.pt"))
+                print("Saved CoOp token for best validation accuracy.")
+
             epochs_without_improvement = 0            
         else:
             epochs_without_improvement += 1

@@ -274,6 +274,10 @@ def plot_prob_evolution(base_dir, class_names, upto_epoch=None):
     plt.savefig(os.path.join(base_dir, "prob_evolution_correct.png"))
     plt.close()
 
+def write_to_file(filepath, content):
+    with open(filepath, 'w') as f:
+        f.write(content)
+
 def main():
     # ------------------ REPRODUCIBILITY ------------------
     seed = 2025 
@@ -593,34 +597,25 @@ def main():
         tracker.save()        
         if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
             if val_loss[-1] < best_val_loss:
+                write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_val_loss.txt"), f"{best_val_loss:.4f} -> {val_loss[0]:.4f} at epoch {epoch+1}\n")
                 best_val_loss = val_loss[-1]
-                print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
-
-                if config.TUNING.lower() == 'softcpt':                
-                    torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bval.pt"))
-                    # If the logit_scale and bias need to be optmized than we save them
-                    if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
-                        model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
-                else:
-                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bval.pt"))
-                    if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
-                        model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
-                model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="softCPT_tokens.bval.pt")
 
             if sum(val_acc)/num_tasks > best_accuracy:
+                write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_accuracy.txt"), f"{best_accuracy:.4f} -> {sum(val_acc)/num_tasks:.4f} at epoch {epoch+1}\n")
                 best_accuracy = sum(val_acc)/num_tasks
-                print(f"New best validation accuracy: {best_accuracy:.4f}. Saving model...")
-            
-                if config.TUNING.lower() == 'softcpt':                
-                    torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bacc.pt"))
-                    if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
-                        model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bacc.pt")
 
-                else:
-                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bacc.pt"))
-                    if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
-                        model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bacc.pt")
-                model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="softCPT_tokens.bacc.pt")
+        
+            if config.TUNING.lower() == 'softcpt':                
+                torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bval.pt"))
+                if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
+                    model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
+
+            else:
+                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bval.pt"))
+                if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
+                    model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
+
+            model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="softCPT_tokens.bval.pt")
 
             epochs_without_improvement = 0
         else:
