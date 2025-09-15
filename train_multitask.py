@@ -615,7 +615,7 @@ def main():
                 if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
                     model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
 
-            model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="softCPT_tokens.bval.pt")
+            model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, f"ckpt/softCPT_tokens.bval.pt"))
 
             epochs_without_improvement = 0
         else:
