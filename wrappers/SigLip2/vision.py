@@ -4,6 +4,7 @@ import torch
 
 from wrappers.promptopt.prompt_learner import VisionPromptLearner
 
+
 from transformers.modeling_outputs import BaseModelOutputWithPooling, BaseModelOutput
 from transformers.modeling_utils import PreTrainedModel  # base for SiglipPreTrainedModel
 
@@ -28,7 +29,7 @@ class CustomSiglipVisionTransformer(nn.Module):
         # Add the Prompt Learner if needed
         self.num_prompt = num_prompt
         if num_prompt > 0:
-            self.prompt_learner = VisionPromptLearner(num_prompt=num_prompt, emb_size=config.hidden_size, is_cls_present=False)  # Uncomment if using a prompt learner
+            self.prompt_learner = VisionPromptLearner(num_prompt=num_prompt, emb_size=config.hidden_size, is_cls_present=False)
 
         self.encoder = SiglipEncoder(config)
         self.post_layernorm = nn.LayerNorm(embed_dim, eps=config.layer_norm_eps)
@@ -49,8 +50,6 @@ class CustomSiglipVisionTransformer(nn.Module):
         )
         
         hidden_states = self.embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
-        
-        
 
         if self.num_prompt > 0:
             hidden_states = self.prompt_learner(hidden_states)
@@ -77,7 +76,9 @@ class SiglipVisionModel(SiglipPreTrainedModel):
     def __init__(self, config: SiglipVisionConfig, num_prompt=0):
         super().__init__(config)
 
-        self.vision_model = CustomSiglipVisionTransformer(config, num_prompt=num_prompt)
+        self.vision_model = CustomSiglipVisionTransformer(
+            config, num_prompt=num_prompt
+        )
 
 
         # Initialize weights and apply final processing

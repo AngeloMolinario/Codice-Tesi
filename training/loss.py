@@ -93,6 +93,8 @@ class OrdinalAgeLossEMD_(nn.Module):
         else:        
             normalized_emd_loss = weighted_emd_loss / (self.num_classes - 1)
         
+
+
         total_loss = ce_loss + self.lambda_ordinal * normalized_emd_loss
 
         return total_loss
@@ -116,8 +118,8 @@ class OrdinalAgeLossEMD(nn.Module):
                  age_bins=("0-2","3-9","10-19","20-29","30-39","40-49","50-59","60-69","70+"),
                  plus_cap=90,          # limite superiore per "70+"
                  normalize_D=True,     # normalizza D su [0,1] dividendo per D.max()
-                 omega=2.0,              # ω nell'Eq.16 (XEMD2 usa ω=2)
-                 mu=-0.25             # μ nell'Eq.16 (paper: μ negativo per "premiare" vicini)
+                 omega=3.0,              # ω nell'Eq.16 (XEMD2 usa ω=2)
+                 mu=-0.0             # μ nell'Eq.16 (paper: μ negativo per "premiare" vicini)
                  ):
         super().__init__()
         self.num_classes = num_classes
@@ -133,8 +135,8 @@ class OrdinalAgeLossEMD(nn.Module):
             self.class_weights = torch.ones(num_classes, dtype=torch.float32)
 
         self.softmax = nn.Softmax(dim=1)
+        self.factor = math.log(num_classes)
 
-        # ---- COSTRUISCI D (statica) ----
         self.register_buffer("D", self._build_D_from_age_bins(
             age_bins=age_bins, plus_cap=plus_cap, normalize=normalize_D
         ))  # shape [C, C]
@@ -151,12 +153,6 @@ class OrdinalAgeLossEMD(nn.Module):
         return lo, hi
 
     def _build_D_from_age_bins(self, age_bins, plus_cap=90, normalize=True):
-        """
-        Costruisce D come distanza tra i mid-point degli intervalli (1D embedding ordinato).
-        D_{i,j} = | m_i - m_j |, con m_i midpoint dell'intervallo i.
-        Opzionalmente normalizza dividendo per max(D) per avere scala in [0,1].
-        """
-        assert len(age_bins) == self.num_classes, "num_classes e numero di bin devono coincidere"
         mids = []
         for s in age_bins:
             lo, hi = self._parse_age_bin(s, plus_cap)
@@ -178,9 +174,7 @@ class OrdinalAgeLossEMD(nn.Module):
         targets: (B,)
         return: scalare medio sul batch
         """
-        B, C = probs.shape
-        # D_col[b, i] = D_{i, k_b}
-        # Prendiamo per ogni elemento del batch la colonna della D corrispondente al target
+        
         Ddevice = self.D.to(probs.device)
         D_cols = Ddevice.index_select(dim=1, index=targets)          # [C, B]
         D_cols = D_cols.transpose(0, 1)                               # [B, C]
@@ -200,15 +194,15 @@ class OrdinalAgeLossEMD(nn.Module):
             predictions, targets,
             weight=self.class_weights.to(device),
             reduction='mean'
-        )
+        )# / self.factor
 
         probs = self.softmax(predictions)
 
         # Termine di regolarizzazione Eq.16
         reg = self._emd_regularizer_eq16(probs, targets)
 
-        # NOTA: nel paper non normalizzano per (C-1) o (C-1)^2 nell'Eq.16.
-        # Se vuoi mantenere la scala simile alla tua loss precedente, puoi agire su lambda_ordinal.
+        #print(f"CE Loss: {ce.item():.4f}, EMD Reg: {reg.item():.4f}, total_loss_weighted: {self.lambda_ordinal*reg:.4f} - Total {ce.item() + self.lambda_ordinal*reg:.4f}")
+
         total = ce + self.lambda_ordinal * reg
         return total
 
@@ -217,11 +211,6 @@ class OrdinalAgeLossEMD(nn.Module):
 class CrossEntropyLoss():
     def __init__(self, num_classes, weights=None):
         self.ce = nn.CrossEntropyLoss(weight=weights)        
-        self.softmax = nn.Softmax(dim=1)
-        if weights is not None:
-            self.class_weights = weights
-        else:
-            self.class_weights = torch.ones(num_classes).to('cuda')
         self.factor = math.log(num_classes)
 
     def __call__(self, logit, true_labels):
@@ -237,7 +226,6 @@ class MaskedLoss():
 
     def __call__(self, logit, true_labels):                
         valid_mask = true_labels != self.ignore_index
-        
         if not valid_mask.any():
             loss = torch.tensor(0.0, device=logit.device, requires_grad=True)
 

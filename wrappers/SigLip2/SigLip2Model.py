@@ -30,12 +30,12 @@ def download_from_hub(repo_id, filename, cache_dir=None):
     print(f"Downloaded to {local_file}")
     return local_file
 
-def safetensors_to_pth(safetensors_file, output_dir):
+def safetensors_to_pth(safetensors_file, output_dir, repo_id="google/siglip2-large-patch16-384"):
     # Load the safetensors file
     tensors = load_file(safetensors_file)
-    model = Siglip2Model(AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir=output_dir), 0)
+    model = Siglip2Model(AutoConfig.from_pretrained(repo_id, cache_dir=output_dir), 0)
     model.load_state_dict(tensors)
-    torch.save(model.state_dict(), os.path.join(output_dir, "model.pth"))
+    torch.save(model.state_dict(), os.path.join(output_dir, repo_id.split("/")[-1].replace("-","_") + ".pt"))
 
 
 class Siglip2Model(SiglipPreTrainedModel):
@@ -65,6 +65,7 @@ class Siglip2Model(SiglipPreTrainedModel):
         self.config = config    
         text_config = config.text_config
         vision_config = config.vision_config
+        self.image_size = vision_config.image_size
         # Initialize the text and vision models with the number of prompts
         self.text_model = SiglipTextModel(text_config)
         # If num prompt is 0 than the model is the pure baseline
@@ -105,18 +106,55 @@ class Siglip2Model(SiglipPreTrainedModel):
             torch.save({'text_features': text_features.cpu()}, text_features_path)
             print(f"Text features salvate in {text_features_path} (shape: {text_features.shape})")
 
-    def load_model(self, path, map_location, repo_id="google/siglip2-base-patch16-224", filename="model.safetensors"):
-        # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
+    def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
+        """
+        Save vision-only checkpoint with full-model key format for Siglip2Model.
+        - Prefix keys with `vision_model.` to match full model state_dict format.
+        - Exclude VPT params (prompt_learner.*).
+        - Include `logit_scale` and (if present) `logit_bias`.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        visual_sd = self.vision_model.state_dict()
+        out_sd = {}
+        for k, v in visual_sd.items():
+            if k.startswith("prompt_learner"):
+                continue
+            out_sd[f"vision_model.{k}"] = v.detach().cpu()
+        # Add scale/bias
+        out_sd["logit_scale"] = self.logit_scale.detach().cpu()
+        if hasattr(self, "logit_bias") and isinstance(self.logit_bias, torch.nn.Parameter):
+            out_sd["logit_bias"] = self.logit_bias.detach().cpu()
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[Siglip2Model] Vision model saved (vision_model.* + logit_scale[/bias]) to {save_path}")
 
+    def save_vpt_token(self, save_path):
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        if hasattr(self.vision_model, 'prompt_learner') and self.vision_model.prompt_learner is not None:
+            state_dict = {
+                'prompt_learner' : self.vision_model.prompt_learner.state_dict()
+            }
+            torch.save(state_dict, save_path)
+            print(f"VPT token saved in {save_path}")
+
+        else:
+            print(f"Prompt learner not found in vision model, skipping save.")
+
+
+    def load_model(self, path, map_location, repo_id="google/siglip2-large-patch16-384", filename="model.safetensors"):
+        # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
+        print(f"Path to load {path}")
         # Check if the file exists
         if not os.path.exists(path):
             print("Model not found. Downloading it from the hub...")
             # If not, download it from the hub
             sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path))
             # Convert the model to .pth format
-            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path))
+            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path), repo_id=repo_id)
         # Load the model
-        state_dict = torch.load(os.path.join(os.path.dirname(path), "model.pth"), map_location=map_location)
+        print(f"Loading the model from path {os.path.normpath(path)}")
+        state_dict = torch.load(path, map_location=map_location)
         result = self.load_state_dict(state_dict, strict=False)
         
         # Check for missing or mismatching keys during the loading of the state_dict
@@ -202,7 +240,10 @@ class Siglip2Vision(nn.Module):
         # Added for compatibility with the HF default configuration
         config.torch_dtype = "float32"        
         config.vision_config.torch_dtype = "float32"
+        self.config = config
         self.config = config            
+        self.num_prompt = num_prompt
+        self.image_size = vision_config.image_size
         
         # If num prompt is 0 than the model is the pure baseline
         self.vision_model = SiglipVisionModel(vision_config, num_prompt=num_prompt)
@@ -216,6 +257,28 @@ class Siglip2Vision(nn.Module):
 
         self._vpt = []
 
+    def save_vision_model(self, output_dir: str, filename: str = "vision_ckpt.pt"):
+        """
+        Save vision-only checkpoint with full-model key format for Siglip2Vision.
+        - Prefix keys with `vision_model.` to match state_dict format.
+        - Exclude VPT params (prompt_learner.*).
+        - Include `logit_scale` and (if present) `logit_bias`.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        visual_sd = self.vision_model.state_dict()
+        out_sd = {}
+        for k, v in visual_sd.items():
+            if k.startswith("prompt_learner"):
+                continue
+            out_sd[f"vision_model.{k}"] = v.detach().cpu()
+        out_sd["logit_scale"] = self.logit_scale.detach().cpu()
+        if hasattr(self, "logit_bias") and isinstance(self.logit_bias, torch.nn.Parameter):
+            out_sd["logit_bias"] = self.logit_bias.detach().cpu()
+        save_path = os.path.join(output_dir, filename)
+        torch.save(out_sd, save_path)
+        print(f"[Siglip2Vision] Vision model saved (vision_model.* + logit_scale[/bias]) to {save_path}")
+
     def get_image_features(self, image, normalize=True):
         vision_outputs = self.vision_model(
             pixel_values=image,
@@ -227,7 +290,7 @@ class Siglip2Vision(nn.Module):
         return vision_outputs
 
     def get_task_image_features(self, task_id, image, normalize=True):
-        self.vision_model.prompt_learner = self._vpt[task_id].to(self.vision_model.device)
+        self.vision_model.prompt_learner = self._vpt[task_id]
         vision_outputs = self.vision_model(
             pixel_values=image,
             output_attentions=self.config.output_attentions,
@@ -239,19 +302,76 @@ class Siglip2Vision(nn.Module):
         return vision_outputs
     
     def forward(self, image):
+        """
+        Ritorna sempre una tupla (age_logit, gender_logit, emotion_logit).
+        Regole:
+          - Se text_features ha 18 vettori: scenario multitask (9,2,7) -> split o calcolo per-task con VPT multipli.
+          - Se text_features ha 9 vettori: solo age -> (age_logit, None, None)
+          - Se text_features ha 2 vettori: solo gender -> (None, gender_logit, None)
+          - Se text_features ha 7 vettori: solo emotion -> (None, None, emotion_logit)
+        Funziona sia con un solo/no VPT (len(_vpt) <= 1) sia con VPT multipli (len(_vpt) > 1).
+        """
+        if self.text_features.numel() == 0:
+            raise RuntimeError("Text features non impostate. Usare set_text_features prima della forward.")
 
-        if len(self._vpt) <= 1:
-            logit = self.logit_scale.exp() * self.get_image_features(image) @ self.text_features.t()
-            return torch.split(logit, [9, 2, 7], dim=-1)
-        
-        text_features = torch.split(self.text_features, [9, 2, 7], dim=0)
-        age_logit = self.logit_scale.exp() * self.get_task_image_features(0, image) @ text_features[0].t()
-        gender_logit = self.logit_scale.exp() * self.get_task_image_features(1, image) @ text_features[1].t()
-        emotion_logit = self.logit_scale.exp() * self.get_task_image_features(2, image) @ text_features[2].t()
-        
-        return age_logit, gender_logit, emotion_logit
+        n_classes = self.text_features.shape[0]
+        scale = self.logit_scale.exp()
+
+        # -------------------- MULTITASK (18 = 9+2+7) --------------------
+        if n_classes == 18:
+            if len(self._vpt) <= 1:
+                # Calcolo unico e split
+                image_feats = self.get_image_features(image, normalize=True)
+                logits = scale * (image_feats @ self.text_features.t())
+                age_logit, gender_logit, emotion_logit = torch.split(logits, [9, 2, 7], dim=-1)
+                return age_logit, gender_logit, emotion_logit
+            else:
+                # Calcolo per task con VPT dedicato
+                age_tf, gender_tf, emotion_tf = torch.split(self.text_features, [9, 2, 7], dim=0)
+                age_feat = self.get_task_image_features(0, image, normalize=True)
+                gender_feat = self.get_task_image_features(1, image, normalize=True)
+                emotion_feat = self.get_task_image_features(2, image, normalize=True)
+                age_logit = scale * (age_feat @ age_tf.t())
+                gender_logit = scale * (gender_feat @ gender_tf.t())
+                emotion_logit = scale * (emotion_feat @ emotion_tf.t())
+                return age_logit, gender_logit, emotion_logit
+
+        # -------------------- SINGLE TASK (9 / 2 / 7) --------------------
+        if n_classes == 9:  # AGE
+            if len(self._vpt) > 1:
+                # Se per qualche motivo ci sono più VPT, usa il primo
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            elif len(self._vpt) == 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            age_logit = scale * (img_feat @ self.text_features.t())
+            return age_logit, None, None
+
+        if n_classes == 2:  # GENDER
+            if len(self._vpt) > 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            elif len(self._vpt) == 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            gender_logit = scale * (img_feat @ self.text_features.t())
+            return None, gender_logit, None
+
+        if n_classes == 7:  # EMOTION
+            if len(self._vpt) > 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            elif len(self._vpt) == 1:
+                img_feat = self.get_task_image_features(0, image, normalize=True)
+            else:
+                img_feat = self.get_image_features(image, normalize=True)
+            emotion_logit = scale * (img_feat @ self.text_features.t())
+            return None, None, emotion_logit
+
+        raise ValueError(f"Numero di text features non supportato: {n_classes}. Attesi 9, 2, 7 oppure 18 (9+2+7).")
 
     def set_text_features(self, text_features):
+        # ...existing code...
         self.text_features = text_features
 
     def load_VPT_token(self, ckpt_path, device):
@@ -259,7 +379,7 @@ class Siglip2Vision(nn.Module):
         if 'prompt_learner' in checkpoint:
             # Inizializza un'istanza di VisionPromptLearner
             vpt = VisionPromptLearner(
-                emb_size=self.visual.embed_dim,
+                emb_size=self.config.vision_config.hidden_size,
                 num_prompt=self.num_prompt,
                 is_cls_present=False
             )
@@ -273,30 +393,64 @@ class Siglip2Vision(nn.Module):
             print(f"No VPT token found in {ckpt_path}")
 
     def load_baseline(self, path, map_location, repo_id="google/siglip2-base-patch16-224", filename="model.safetensors"):
-        # Load the model weights from a local path, if the model is not found than it is downloaded from the hub, saved in the given path and loaded
+        """
+        Load baseline weights for the vision backbone with broad compatibility:
+        - If `path` exists and points to a checkpoint saved via `save_vision_model`, it expects keys
+          prefixed with `vision_model.*` plus `logit_scale`/`logit_bias`.
+        - Otherwise falls back to downloading/converting from the Hub and loading `model.pth`.
+        """
+        # Prefer explicit local checkpoint if present
+        if path is not None and os.path.exists(path):
+            ckpt = torch.load(path, map_location=map_location)
+            # Unwrap nested dicts
+            if isinstance(ckpt, dict) and ("state_dict" in ckpt or "weights" in ckpt):
+                ckpt = ckpt.get("state_dict", ckpt.get("weights", ckpt))
+            # Strip optional module. prefix
+            ckpt = {k.replace("module.", ""): v for k, v in ckpt.items()}
 
-        # Check if the file exists
-        if not os.path.exists(path):
-            print("Model not found. Downloading it from the hub...")
-            # If not, download it from the hub
-            sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path))
-            # Convert the model to .pth format
-            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path))
-        # Load the model
-        state_dict = torch.load(os.path.join(os.path.dirname(path), "model.pth"), map_location=map_location)
-        result = self.load_state_dict(state_dict, strict=False)
-        
-        # Check for missing or mismatching keys during the loading of the state_dict
-        if result.missing_keys:
+            # Load logit params if present
+            if "logit_scale" in ckpt and hasattr(self, "logit_scale"):
+                try:
+                    self.logit_scale.data.copy_(ckpt["logit_scale"].to(map_location))
+                except Exception:
+                    pass
+            if "logit_bias" in ckpt and hasattr(self, "logit_bias"):
+                try:
+                    self.logit_bias.data.copy_(ckpt["logit_bias"].to(map_location))
+                except Exception:
+                    pass
+
+            # Extract only vision weights
+            if any(k.startswith("vision_model.") for k in ckpt):
+                vision_sd = {k.replace("vision_model.", ""): v for k, v in ckpt.items() if k.startswith("vision_model.")}
+            else:
+                # Assume it contains only vision weights
+                vision_sd = {k: v for k, v in ckpt.items() if not k.startswith("text_model.")}
+
+            # Exclude VPT if present
+            vision_sd = {k: v for k, v in vision_sd.items() if not k.startswith("prompt_learner")}
+
+            result = self.vision_model.load_state_dict(vision_sd, strict=False)
+        else:
+            # Fallback to Hub download/convert and load full state_dict
+            print("Model not found locally. Downloading from the hub...")
+            sf_path = download_from_hub(repo_id, filename, cache_dir=os.path.dirname(path) if path else None)
+            safetensors_to_pth(sf_path, output_dir=os.path.dirname(path) if path else ".", repo_id=repo_id)
+            state_dict = torch.load(os.path.join(os.path.dirname(path) if path else ".", repo_id.split("/")[-1].replace("-","_") + ".pt"), map_location=map_location)
+            result = self.load_state_dict(state_dict, strict=False)
+
+        # Report loading status
+        if hasattr(result, 'missing_keys') and result.missing_keys:
             print("[WARNING] The loaded models miss the following keys, ensure to train it on a downstream task:")
             for k in result.missing_keys:
-                print(f"  {k}")
-        if result.unexpected_keys:
+                if not k.startswith("text_model"):
+                    print(f"  {k}")
+        if hasattr(result, 'unexpected_keys') and result.unexpected_keys:
             print("[WARNING] The loaded models have unexpected keys:")
             for k in result.unexpected_keys:
-                print(f"  {k}")
+                if not k.startswith("text_model"):
+                    print(f"  {k}") 
 
-        
         print(f"LOGIT SCALE: {self.logit_scale} - exp {self.logit_scale.exp()}")
         print(f"LOGIT BIAS: {self.logit_bias}")
 

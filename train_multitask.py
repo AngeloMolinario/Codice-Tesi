@@ -1,9 +1,8 @@
 import os
 import sys
-import json
+import time
 import torch
 import shutil
-from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 import torchvision.transforms as T
 import matplotlib.pyplot as plt
@@ -11,34 +10,31 @@ from torchvision import transforms as T
 from torch.amp import autocast, GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 import numpy
-import seaborn as sns
-from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
-from wrappers.PerceptionEncoder.pe import PECore
-from wrappers.promptopt.prompt_learner import CustomModel
-from wrappers.SigLip2.SigLip2Model import Siglip2Model
-from wrappers.tokenizer import PETokenizer, SigLip2Tokenizer
-from transformers import AutoConfig, AutoTokenizer
 from training.loss import *
-from core.vision_encoder import transforms
 from utils.metric import MultitaskTracker
 from utils.configuration import Config
 from utils.running_mean import RunningMeans
 from tqdm import tqdm
+import time
 from training.training_functions import *
 
 
-def get_loss_fn(config, weights=None):    
+def get_loss_fn(config, weights=[None, None, None]):    
     '''
         Get a list of loss functions with the following position:
         0. Age loss
         1. Gender loss
         2. Emotion loss
     '''
-    age_loss = OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]), class_frequencies=weights[0], lambda_ordinal=config.EMD_WEIGHT)
+    age_loss = OrdinalAgeLossEMD(num_classes=len(config.CLASSES[0]),
+                                class_frequencies=weights[0],
+                                lambda_ordinal=config.EMD_WEIGHT,
+                                omega=config.EMD_OMEGA,
+                                mu = config.EMD_MU
+                                )
 
     gender_loss = CrossEntropyLoss(num_classes=len(config.CLASSES[1]), weights=weights[1])
     emotion_loss = CrossEntropyLoss(num_classes=len(config.CLASSES[2]), weights=weights[2])
@@ -49,13 +45,13 @@ def get_loss_fn(config, weights=None):
     ]
     return loss
 
-def get_augmentation_transform(config):
+def get_augmentation_transform(config, image_size):
     model_name = config.MODEL.lower()
     tform = [
-        T.Resize((224,224)),
+        T.Resize((image_size, image_size)),
         T.RandomHorizontalFlip(p=0.5),
         T.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.05),
-        T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 0.4))], p=0.5),
+        T.RandomApply([T.GaussianBlur(kernel_size=3, sigma=(0.1, 0.8))], p=0.5),
         T.ToTensor()
     ]
 
@@ -278,7 +274,21 @@ def plot_prob_evolution(base_dir, class_names, upto_epoch=None):
     plt.savefig(os.path.join(base_dir, "prob_evolution_correct.png"))
     plt.close()
 
+def write_to_file(filepath, content):
+    with open(filepath, 'w') as f:
+        f.write(content)
+
 def main():
+    # ------------------ REPRODUCIBILITY ------------------
+    seed = 2025 
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # -----------------------------------------------------
     
     #############################################################################################
     ##                            Load the given configuration file                            ##
@@ -296,7 +306,11 @@ def main():
     ##                               Load correct model                                        ##
     #############################################################################################
 
-    model = get_model(config).to(DEVICE)    
+    model = get_model(config).to(DEVICE)
+
+    # Save the vision model right after loading
+    os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
+    model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
 
     #############################################################################################
     ##                         Dataset and Dataloade building                                  ##
@@ -304,25 +318,14 @@ def main():
 
     training_set =  get_dataset(config=config,
                                split="train",
-                               transform=get_image_transform(config),
-                               augmentation_transform=None#get_augmentation_transform(config)
+                               transform=get_image_transform(config, model.image_size),
+                               augmentation_transform=get_augmentation_transform(config, model.image_size)
                                )
     validation_set = get_dataset(config=config,
                                  split="val",
-                                 transform=get_image_transform(config)
+                                 transform=get_image_transform(config, model.image_size)
                                 )
 
-    train_loader = DataLoader(
-        dataset=training_set,
-        batch_size=config.BATCH_SIZE,
-        shuffle=True,
-        num_workers=config.NUM_WORKERS,
-        pin_memory=True,
-        pin_memory_device="cuda",
-        persistent_workers=True,
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
-    )
 
     val_loader = DataLoader(
         dataset=validation_set,
@@ -331,9 +334,7 @@ def main():
         num_workers=config.NUM_WORKERS,
         pin_memory_device="cuda",
         persistent_workers=True,
-        pin_memory=True,
-        drop_last=True,
-        prefetch_factor=config.PREFETCH_FACTOR
+        pin_memory=(DEVICE == 'cuda')
     )
 
     #############################################################################################
@@ -345,12 +346,35 @@ def main():
     # we use inverse_sqrt as parameters to get the invecerse rooted weights to give more weight to 
     # rare classes and they are normalized so that the max weight is 1.0 and the other are a fraction of it
     weights = [
-        training_set.get_class_weights(0, "normalized_inverse_sqrt").to(DEVICE),
-        training_set.get_class_weights(1, "normalized_inverse_sqrt").to(DEVICE),
-        training_set.get_class_weights(2, "normalized_inverse_sqrt").to(DEVICE),
+        training_set.get_class_weights(0, "default").to(DEVICE),
+        training_set.get_class_weights(1, "default").to(DEVICE),
+        training_set.get_class_weights(2, "default").to(DEVICE),
         ]
     
-    loss_fn = get_loss_fn(config, weights=weights)
+    weight = [
+        torch.ones(9).to(DEVICE),
+        torch.ones(2).to(DEVICE),
+        torch.ones(7).to(DEVICE)
+    ]
+
+    loss_fn = get_loss_fn(config, weights=weight)
+
+    # Replace shuffling with WeightedRandomSampler to mitigate class imbalance across tasks
+    sampler, _sample_weights = build_weighted_sampler(training_set, weights, device=DEVICE, combine="mean")
+    train_loader = DataLoader(
+        dataset=training_set,
+        batch_size=config.BATCH_SIZE,
+        sampler=sampler,
+        shuffle=False,
+        num_workers=config.NUM_WORKERS,
+        pin_memory=(DEVICE == 'cuda'),
+        pin_memory_device="cuda",
+        persistent_workers=True,
+    )
+
+    print("#"*50)
+    print(f"## Sampler weights {_sample_weights}")
+    print("#"*50)
 
     #############################################################################################
     ##                        Optimizer creation and configuration                             ##
@@ -370,8 +394,8 @@ def main():
             param.requires_grad = False
     optimizer = torch.optim.AdamW(params, lr=config.LR, foreach=True, weight_decay=0.0)
 
-    # Add GradScaler for mixed precision
-    scaler = GradScaler(device=DEVICE)
+    # Add GradScaler for mixed precision (CUDA only)
+    scaler = GradScaler(enabled=(DEVICE == 'cuda'))
     # Add CosineAnnealingLR scheduler
     scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
     # Lista per tracciare il learning rate
@@ -413,7 +437,7 @@ def main():
 
     num_tasks = len(config.TASK_NAMES) if config.TASK == -1 else 1
     output_dir = config.OUTPUT_DIR
-    task_names = config.TASK_NAMES
+    task_names = [task.split(" ")[0] for task in config.TASK_NAMES]
     class_names = config.CLASSES
     tracker = MultitaskTracker(
         num_tasks=num_tasks,
@@ -424,12 +448,12 @@ def main():
     print(f"Tracking metrics for multitask: {task_names}")
 
     # EARLY STOPPING BASED ON LOSS
-    patience = 14
+    patience = config.PATIENCE
     best_val_loss = float("inf")
     epochs_without_improvement = 0
     best_accuracy = 0.0
 
-    # TRAINING LOOP
+    # TRAINING LOOPF
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
     train_fn = multitask_train_fn
     val_fn   = multitask_val_fn
@@ -437,6 +461,7 @@ def main():
     running_mean = RunningMeans(['age', 'gender', 'emotion'], alpha=0.95)
     text_features = None
     if config.TUNING.lower() != 'softcpt':
+        '''
         tokenizer = get_tokenizer(config)
         
         task_text_features = []
@@ -447,13 +472,14 @@ def main():
                 task_text_features.append(classes_features)        
         text_features = torch.stack(task_text_features, dim=0)
         torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
-        
+        '''
         text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
+        # SAve the features in the ckpt folder
+        torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
         print(f"Text features shape: {text_features.shape}")
 
 
     data_task_weight = training_set.get_task_weights()
-    print(f"Task weights: {data_task_weight}")
 
     tracker = MultitaskTracker(
         num_tasks=num_tasks,
@@ -474,15 +500,16 @@ def main():
         for i in range(num_tasks):
             w_i = running_mean.get_by_index(i)
             if w_i is None:
-                w_i=1.0
-            w.append((1.0 / max(w_i, 1e-8))* data_task_weight[i])
-        max_raw = max(w)
+                w_i=data_task_weight[i]
+            w.append((1.0 / max(w_i, 1e-8)))
+        max_raw = sum(w)/len(w)#max(w)
         task_weight = torch.tensor([r / max_raw for r in w], device=DEVICE)
-
+        
 
         print(f"Task weights (EMA inverse) for epoch {epoch+1}: {task_weight.tolist()}")
         weights_history.append(task_weight.cpu().numpy())
 
+        start_time = time.time()
         train_loss, train_acc = train_fn(
             model,
             train_loader,
@@ -494,13 +521,15 @@ def main():
             config,
             text_features if config.TUNING.lower()!="softcpt" else None,
             scaler)
-        
+        end_time = time.time()
+        epoch_time = end_time - start_time
+        formatted = time.strftime("%H:%M:%S", time.gmtime(epoch_time)) + f".{int((epoch_time % 1) * 100):02d}"
         running_mean.plot(os.path.join(config.OUTPUT_DIR, "running_mean_train.png"))
         for t in range(num_tasks):
             print(f"  Task '{task_names[t]}': Loss = {train_loss[t]:.4f}, Accuracy = {train_acc[t]:.4f}")
             tracker.update_loss(t, train_loss[t], train=True)
             tracker.update_accuracy(t, train_acc[t], train=True)
-        print(f"  Total Loss: {sum(train_loss[:-1]):.4f}, Total weighted loss {train_loss[-1]:.4f}, Mean Accuracy : {sum(train_acc)/num_tasks:.4f}")        
+        print(f"  Total Loss: {sum(train_loss[:-1]):.4f}, Total weighted loss {train_loss[-1]:.4f}, Mean Accuracy : {sum(train_acc)/num_tasks:.4f} - Time: {formatted}")        
 
         if hasattr(model, 'logit_scale'):
             print(f"Logit scale: {model.logit_scale.item()} - exp({model.logit_scale.exp().item()})")
@@ -516,6 +545,7 @@ def main():
         if config.TUNING.lower() == 'softcpt':
             text_features = model.get_text_features(normalize=True)
 
+        start_time = time.time()
         val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(
             model,
             val_loader,
@@ -525,7 +555,10 @@ def main():
             config,
             text_features
         )
-
+        end_time = time.time()
+        epoch_time = end_time - start_time
+        formatted = time.strftime("%H:%M:%S", time.gmtime(epoch_time)) + f".{int((epoch_time % 1) * 100):02d}"
+        print(f"  Validation Time: {formatted}")
         for t in range(num_tasks):
             print(f"  Task '{task_names[t]}': Loss = {val_loss[t]:.4f}, Accuracy = {val_acc[t]:.4f}")
             tracker.update_loss(t, val_loss[t], train=False)
@@ -562,24 +595,28 @@ def main():
         tracker.plot_losses()
         tracker.plot_accuracy()
         tracker.save()        
-        if val_loss[-1] < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
-            if val_loss[-1] < best_val_loss:
-                best_val_loss = val_loss[-1]
-                print(f"New best validation loss: {best_val_loss:.4f}. Saving model...")
-
-                if config.TUNING.lower() == 'softcpt':                
-                    torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bval.pt"))
-                else:
-                    model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bval.pt"))
+        if sum(val_loss[:-1]) < best_val_loss or sum(val_acc)/num_tasks > best_accuracy:
+            if sum(val_loss[:-1]) < best_val_loss:
+                write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_val_loss.txt"), f"{best_val_loss:.4f} -> {sum(val_loss[:-1]):.4f} at epoch {epoch+1}\n")
+                best_val_loss = sum(val_loss[:-1])
 
             if sum(val_acc)/num_tasks > best_accuracy:
+                write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_accuracy.txt"), f"{best_accuracy:.4f} -> {sum(val_acc)/num_tasks:.4f} at epoch {epoch+1}\n")
                 best_accuracy = sum(val_acc)/num_tasks
-                print(f"New best validation accuracy: {best_accuracy:.4f}. Saving model...")
-            
+
+        
             if config.TUNING.lower() == 'softcpt':                
-                torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bacc.pt"))
+                torch.save(model.get_text_features(normalize=True), os.path.join(config.OUTPUT_DIR, f"ckpt/text_features_bval.pt"))
+                if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
+                    model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
+
             else:
-                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bacc.pt"))
+                model.save_vpt_token(os.path.join(config.OUTPUT_DIR, f"ckpt/vpt_token_bval.pt"))
+                if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS or "logit_bias" in config.NAMED_TRAINABLE_PARAMETERS:
+                    model.save_logit(os.path.join(config.OUTPUT_DIR, f"ckpt/"), filename="logits.bval.pt")
+
+            model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, f"ckpt/softCPT_tokens.bval.pt"))
+
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
@@ -611,6 +648,9 @@ def main():
         plt.tight_layout()
         plt.savefig(os.path.join(config.OUTPUT_DIR, 'task_weights_per_epoch.png'))
         plt.close()
+
+    # Save the full model at the end of training
+    #torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, "full_training_model.pt"))
 
 
 if __name__ == "__main__":

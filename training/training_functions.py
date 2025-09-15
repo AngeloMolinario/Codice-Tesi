@@ -6,7 +6,7 @@ from transformers import AutoConfig
 
 from core.vision_encoder import transforms
 from wrappers.PerceptionEncoder.pe import PECore
-from wrappers.promptopt.prompt_learner import CustomModel
+from wrappers.promptopt.prompt_learner import CustomModel, CoopModel
 from wrappers.SigLip2.SigLip2Model import Siglip2Model
 from wrappers.tokenizer import PETokenizer, SigLip2Tokenizer
 
@@ -15,17 +15,112 @@ from dataset.dataset import BaseDataset, MultiDataset, TaskBalanceDataset
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from torch.utils.data import WeightedRandomSampler
 
-def get_image_transform(config):
+
+def _gather_labels_fast(dataset):
+    """
+    Return three lists (age, gender, emotion) of length len(dataset) without loading images.
+    Supports BaseDataset, MultiDataset, and TaskBalanceDataset.
+    """
+    ages, genders, emotions = [], [], []
+
+    if isinstance(dataset, BaseDataset):
+        # Direct arrays available
+        ages = list(dataset.age_groups)
+        genders = list(dataset.genders)
+        emotions = list(dataset.emotions)
+        return ages, genders, emotions
+
+    if isinstance(dataset, MultiDataset):
+        # Concatenate labels from each sub-dataset in order
+        for ds in dataset.datasets:
+            ages.extend(ds.age_groups)
+            genders.extend(ds.genders)
+            emotions.extend(ds.emotions)
+        return ages, genders, emotions
+
+    if isinstance(dataset, TaskBalanceDataset):
+        # Use index_map to respect any duplication/shuffling performed at construction
+        for ds_idx, local_idx, _ in dataset.index_map:
+            ds = dataset.datasets[ds_idx]
+            ages.append(ds.age_groups[local_idx])
+            genders.append(ds.genders[local_idx])
+            emotions.append(ds.emotions[local_idx])
+        return ages, genders, emotions
+
+    # Fallback (slower): access dataset[i][1] which returns labels, may load images
+    for i in range(len(dataset)):
+        try:
+            _, lbl = dataset[i]
+            ages.append(int(lbl[0]))
+            genders.append(int(lbl[1]))
+            emotions.append(int(lbl[2]))
+        except Exception:
+            ages.append(-1); genders.append(-1); emotions.append(-1)
+    return ages, genders, emotions
+
+
+def build_weighted_sampler(dataset, class_weights_per_task, device, combine="mean", min_weight: float = 1e-4):
+    """
+    Build a WeightedRandomSampler for a (possibly multi-task) dataset.
+
+    Args:
+        dataset: BaseDataset | MultiDataset | TaskBalanceDataset
+        class_weights_per_task: list/tuple of Tensors [age_w, gender_w, emotion_w]
+            Each tensor maps class index -> weight. Indices with no samples may be missing.
+        combine: how to merge task weights per sample: 'mean' | 'sum' | 'max'
+        min_weight: lower bound applied if a sample has no valid labels
+
+    Returns:
+        sampler, weights_tensor
+    """
+    assert isinstance(class_weights_per_task, (list, tuple)) and len(class_weights_per_task) >= 3, \
+        "class_weights_per_task must be a list of 3 tensors [age, gender, emotion]"
+
+    age_w, gender_w, emotion_w = class_weights_per_task[:3]
+
+    ages, genders, emotions = _gather_labels_fast(dataset)
+    n = len(ages)
+
+    weights = torch.zeros(n, dtype=torch.float32)
+    for i in range(n):
+        w_parts = []
+        a, g, e = ages[i], genders[i], emotions[i]
+        if a != -1 and int(a) < len(age_w):
+            w_parts.append(age_w[int(a)].item())
+        if g != -1 and int(g) < len(gender_w):
+            w_parts.append(gender_w[int(g)].item())
+        if e != -1 and int(e) < len(emotion_w):
+            w_parts.append(emotion_w[int(e)].item())
+
+        if not w_parts:
+            weights[i] = min_weight
+        else:
+            if combine == "sum":
+                weights[i] = sum(w_parts)
+            elif combine == "max":
+                weights[i] = max(w_parts)
+            else:  # mean (default)
+                weights[i] = sum(w_parts) / len(w_parts)
+
+    # Normalize weights to have mean ~ 1.0 (keeps sampler numerically stable)
+    mean_w = weights.mean().clamp_min(1e-8)
+    weights = weights / mean_w
+    weights = weights.to(device)
+    sampler = WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
+    return sampler, weights
+
+def get_image_transform(config, image_size):
     '''
         Get the image transformation used during the pretraining of the specific model.
     '''
     model_name = config.MODEL.lower()
     if model_name == 'pecore':
-        return transforms.get_image_transform(224)
+        return transforms.get_image_transform(image_size)
     elif model_name == 'siglip2':
         return T.Compose([
-            T.Resize((224, 224)),
+            T.Resize((image_size, image_size)),
             T.ToTensor(),
             T.Normalize([0.5,0.5,0.5], [0.5,0.5,0.5])
         ])
@@ -45,29 +140,25 @@ def get_model(config):
     ''' This method look at the configuration file and return the correct model initialized with pretrained weights and the specified attributes'''
     tuning = config.TUNING.lower()
     model_name = config.MODEL.lower()
-
-    if tuning == "softcpt":
+    if tuning == 'coop' or hasattr(config, "PRETRAINED_COOP"):
         if model_name == "pecore":
-            base_model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
-            model = CustomModel(
+            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+            model = CoopModel(
                 n_ctx=config.NUM_TEXT_CNTX,
-                tasknames=config.TASK_NAMES,
-                classnames=config.CLASSES,
+                classes=config.CLASSES[config.TASK],
                 model=base_model,
                 tokenizer=get_tokenizer(config)
             )
             return model
-        
         elif model_name == "siglip2":
             base_model = Siglip2Model(
-                config=AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                config=AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            base_model.load_model(path="./hf_models/model.pth", map_location="cpu")
-            model = CustomModel(
+            base_model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
+            model = CoopModel(
                 n_ctx=config.NUM_TEXT_CNTX,
-                tasknames=config.TASK_NAMES,
-                classnames=config.CLASSES,
+                classes=config.CLASSES[config.TASK],
                 model=base_model,
                 tokenizer=get_tokenizer(config)
             )
@@ -75,17 +166,55 @@ def get_model(config):
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
+    if tuning == "softcpt":
+        if model_name == "pecore":
+            base_model = PECore.from_config(
+                config.MODEL_TYPE,
+                pretrained=True,
+                num_prompt=config.NUM_VISUAL_PROMPT)
+            model = CustomModel(
+                n_ctx=config.NUM_TEXT_CNTX,
+                tasknames=config.TASK_NAMES,
+                classnames=config.CLASSES,
+                model=base_model,
+                tokenizer=get_tokenizer(config),
+                cls_spc=config.CSP
+            )
+            return model
+        
+        elif model_name == "siglip2":
+            base_model = Siglip2Model(
+                config=AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
+                num_prompts=config.NUM_VISUAL_PROMPT
+            )
+            base_model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
+            model = CustomModel(
+                n_ctx=config.NUM_TEXT_CNTX,
+                tasknames=config.TASK_NAMES,
+                classnames=config.CLASSES,
+                model=base_model,
+                tokenizer=get_tokenizer(config),
+                cls_spc=config.CSP
+            )
+            return model
+        else:
+            raise ValueError(f"Unknown model name: {model_name}")
+
     elif tuning == "vpt":
         if model_name == "pecore":
-            model = PECore.from_config("PE-Core-B16-224", pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+            model = PECore.from_config(
+                config.MODEL_TYPE,
+                pretrained=True,
+                num_prompt=config.NUM_VISUAL_PROMPT
+            )
             return model
         
         elif model_name == "siglip2":
             model = Siglip2Model(
-                config = AutoConfig.from_pretrained("google/siglip2-base-patch16-224", cache_dir="./hf_models"),
+                config = AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            model.load_model(path="./hf_models/model.pth", map_location="cpu")
+            model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
             return model
         
         else:
@@ -193,7 +322,7 @@ def analyze_age_errors(all_preds_list, all_labels_list, all_probs_list, class_na
             plt.xticks(rotation=45)
             plt.xlabel("Classi")
             plt.ylabel("Frazione di campioni (normalizzata)")
-            plt.title(f"Distribuzione di probabilitÃ  normalizzata - {class_names[c]}")
+            plt.title(f"Distribuzione di probabilità normalizzata - {class_names[c]}")
             _annotate_bars_and_fix_ylim(ax, bars)
             plt.tight_layout()
             plt.savefig(os.path.join(prob_dir, f"class_{c}_{class_names[c]}.png"))

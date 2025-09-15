@@ -36,7 +36,7 @@ class VisionTransformer(nn.Module):
         output_dim: Optional[int] = 1280,
         attn_pooler_heads: int = 8,
         pool_type: Literal["attn", "tok", "avg", "none"] = "attn",
-        num_prompt: int = 0, # Number of context prompt tokens to be prepended to the image patches
+        num_prompt: int = 0  # Number of context prompt tokens to be prepended        
     ):
         super().__init__()
         assert pool_type in ("attn", "tok", "avg", "none")
@@ -280,16 +280,14 @@ class VisionTransformer(nn.Module):
         if self.use_abs_posemb:
             x = x + self._sample_abs_posemb(grid_h, grid_w)
         
-        # If self.num_prompt > 0 than use the PromptLearner to prepend prompt tokens
         if self.num_prompt > 0:
             x = self.prompt_learner(x)
 
         if self.use_rope2d:
             self.rope.update_grid(x.device, grid_h, grid_w)
 
-        
         x = self.ln_pre(x)
-        
+    
         x = self.transformer(x, layer_idx=layer_idx)
 
         if norm:

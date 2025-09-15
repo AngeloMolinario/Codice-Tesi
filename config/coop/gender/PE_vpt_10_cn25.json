@@ -1,0 +1,44 @@
+{
+    "TUNING" : "vpt",
+    "MODEL"  : "pecore",
+    "TASK"   : 1,
+    "MODEL_TYPE" : "PE-Core-L14-336",
+    "NUM_VISUAL_PROMPT" : 10,
+    "NUM_TEXT_CNTX" : 25,
+    "TASK_NAMES": ["age estimation from face picture", "gender recognition from facial features", "emotion classification from facial expression"], 
+    "CLASSES": [
+        ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"],
+        ["male", "female"],
+        ["surprise", "fear", "disgust", "happy", "sad", "angry", "neutral"]
+    ],    
+    "NAMED_TRAINABLE_PARAMETERS": [
+        "prompt_learner",
+        "task_prompt_learner", 
+        "prompt_gen",
+        "logit_scale"
+    ],
+
+    "DATASET_NAMES": {
+        "-1" : ["FairFace", "RAF-DB", "CelebA_HQ", "Lagenda"],
+        "0"  : ["FairFace", "Lagenda"],   
+        "1"  : ["FairFace", "RAF-DB", "CelebA_HQ", "Lagenda"],
+        "2"  : ["RAF-DB"]    
+    },
+
+    
+    "EMD_WEIGHT" : 30,
+    "EMD_OMEGA" : 2.0,
+    "EMD_MU": -0.0025,
+
+    "PRETRAINED_COOP" : "../TRAIN/PECore/L14/coop/Gender_cntx_25/ckpt/coop_token_bval.pt",
+
+    "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
+    "BATCH_SIZE" : 64,
+    "NUM_WORKERS" : 12,
+    "LR" : 2e-3,
+    "OUTPUT_DIR" : "../TRAIN/PECore/L14/vpt/Gender_cntx_25_vpt_10/",
+    "VERBOSE": true,
+    "USE_TQDM": false,
+    "EPOCHS" : 20,
+    "PATIENCE" : 5
+}
