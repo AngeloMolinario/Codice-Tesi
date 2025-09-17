@@ -71,32 +71,45 @@ def format_table(headers, rows):
     table_lines = [separator, header_row, separator] + formatted_rows + [separator]
     return "\n".join(table_lines)
 
-def write_results(output_dir, top1_acc, top2_acc, onebin_acc, prf_task=None):
+def write_results(output_dir, top1_acc, prf_task=None):
     """Write results to file."""
     os.makedirs(output_dir, exist_ok=True)
     
     tasks = ['age', 'gender', 'emotion']
     rows = []
     
+    valid_tasks = []  # Track valid tasks for average calculation
+    
     for i in range(len(top1_acc)):
         prec = recall = f1 = "N/A"
         if prf_task:
-            prec = f"{prf_task['precision'][i]:.4f}"
-            recall = f"{prf_task['recall'][i]:.4f}"
-            f1 = f"{prf_task['f1'][i]:.4f}"
+            prec = f"{prf_task['precision'][i]:.4f}" if prf_task['precision'][i] > 0 else "-"
+            recall = f"{prf_task['recall'][i]:.4f}" if prf_task['recall'][i] > 0 else "-"
+            f1 = f"{prf_task['f1'][i]:.4f}" if prf_task['f1'][i] > 0 else "-"
+        
+        if top1_acc[i] >= 0:  # Valid task with data
+            top1_str = f"{top1_acc[i]:.4f}"
+            valid_tasks.append(i)
+        else:
+            top1_str = "-"
         
         rows.append([
             f"Task {tasks[i]}",
-            f"{top1_acc[i]:.4f}",
-            f"{top2_acc[i]:.4f}",
-            f"{onebin_acc[i]:.4f}" if i == 0 else "N/A",
+            top1_str,
             prec, recall, f1
         ])
     
-    avg_top1 = sum(top1_acc) / len(top1_acc)
-    rows.append(["Average", f"{avg_top1:.4f}", "N/A", "N/A", "N/A", "N/A", "N/A"])
+    # Calculate average only for valid tasks
+    if valid_tasks:
+        valid_accs = [top1_acc[i] for i in valid_tasks]
+        avg_top1 = sum(valid_accs) / len(valid_accs)
+        avg_str = f"{avg_top1:.4f}"
+    else:
+        avg_str = "-"
     
-    headers = ["Task", "Top-1", "Top-2", "1-Bin (Age)", "Precision", "Recall", "F1"]
+    rows.append(["Average", avg_str, "-", "-", "-"])
+    
+    headers = ["Task", "Top-1", "Precision", "Recall", "F1"]
     table_str = format_table(headers, rows)
     
     with open(os.path.join(output_dir, "results.txt"), "w") as f:
@@ -124,42 +137,13 @@ def save_confusion_matrix(y_true, y_pred, class_names, task_name, output_dir):
     cm = confusion_matrix(y_true, y_pred, labels=valid_labels)
     valid_class_names = [class_names[i] for i in valid_labels]
     
-    # Calcola le percentuali per una migliore visualizzazione
-    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    cm_normalized = np.nan_to_num(cm_normalized)  # Gestisci divisioni per zero
-    
-    plt.figure(figsize=(10, 8))
-    plt.imshow(cm_normalized, interpolation='nearest', cmap='Blues')
-    plt.title(f'Confusion Matrix - {task_name}', fontsize=14, fontweight='bold')
-    plt.colorbar(label='Normalized Frequency')
-    
-    tick_marks = np.arange(len(valid_class_names))
-    plt.xticks(tick_marks, valid_class_names, rotation=45, ha='right')
-    plt.yticks(tick_marks, valid_class_names)
-    
-    # Aggiungi annotazioni numeriche
-    thresh = cm_normalized.max() / 2.0
-    for i, j in np.ndindex(cm.shape):
-        # Mostra sia il valore assoluto che la percentuale
-        text = f'{cm[i, j]}\n({cm_normalized[i, j]:.2%})'
-        plt.text(j, i, text, ha="center", va="center",
-                color="white" if cm_normalized[i, j] > thresh else "black",
-                fontsize=9, fontweight='bold')
-    
-    plt.xlabel('Predicted Label', fontsize=12)
-    plt.ylabel('True Label', fontsize=12)
-    plt.tight_layout()
-    
-    # Salva anche una versione con valori assoluti
-    plt.savefig(os.path.join(output_dir, f'confusion_matrix_{task_name.lower()}_normalized.png'), 
-                dpi=300, bbox_inches='tight')
-    
-    # Crea anche una matrice con solo valori assoluti
+    # Crea matrice con solo valori assoluti
     plt.figure(figsize=(10, 8))
     plt.imshow(cm, interpolation='nearest', cmap='Blues')
-    plt.title(f'Confusion Matrix (Absolute Values) - {task_name}', fontsize=14, fontweight='bold')
+    plt.title(f'Confusion Matrix - {task_name}', fontsize=14, fontweight='bold')
     plt.colorbar(label='Count')
     
+    tick_marks = np.arange(len(valid_class_names))
     plt.xticks(tick_marks, valid_class_names, rotation=45, ha='right')
     plt.yticks(tick_marks, valid_class_names)
     
@@ -173,7 +157,7 @@ def save_confusion_matrix(y_true, y_pred, class_names, task_name, output_dir):
     plt.xlabel('Predicted Label', fontsize=12)
     plt.ylabel('True Label', fontsize=12)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'confusion_matrix_{task_name.lower()}_absolute.png'), 
+    plt.savefig(os.path.join(output_dir, f'confusion_matrix_{task_name.lower()}.png'), 
                 dpi=300, bbox_inches='tight')
     plt.close('all')  # Chiudi tutte le figure per liberare memoria
 
@@ -268,63 +252,7 @@ def save_class_histograms(y_true, y_pred, class_names, task_name, output_dir):
         filename = f'class_histogram_{task_name.lower()}_true_{class_names[true_class].replace("/", "_").replace("-", "_")}.png'
         plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
         plt.close()
-    
-    # Crea anche un istogramma riassuntivo con tutte le classi
-    create_summary_histogram(y_true_valid, y_pred_valid, class_names, task_name, output_dir)
-
-def create_summary_histogram(y_true, y_pred, class_names, task_name, output_dir):
-    """Create a summary histogram showing overall classification performance."""
-    # Calcola accuracy per classe
-    class_accuracies = []
-    class_totals = []
-    
-    for true_class in range(len(class_names)):
-        class_mask = y_true == true_class
-        if not np.any(class_mask):
-            class_accuracies.append(0)
-            class_totals.append(0)
-            continue
-            
-        predictions_for_class = y_pred[class_mask]
-        correct = np.sum(predictions_for_class == true_class)
-        total = len(predictions_for_class)
         
-        class_accuracies.append(correct / total if total > 0 else 0)
-        class_totals.append(total)
-    
-    # Crea l'istogramma riassuntivo
-    plt.figure(figsize=(12, 8))
-    
-    x = np.arange(len(class_names))
-    colors = ['green' if acc > 0.5 else 'orange' if acc > 0.3 else 'red' for acc in class_accuracies]
-    
-    bars = plt.bar(x, class_accuracies, color=colors, alpha=0.7, edgecolor='black', linewidth=1)
-    
-    # Aggiungi etichette
-    for i, (acc, total) in enumerate(zip(class_accuracies, class_totals)):
-        if total > 0:
-            plt.text(i, acc + 0.01, f'{acc:.3f}\n({total} samples)', 
-                    ha='center', va='bottom', fontweight='bold', fontsize=9)
-    
-    plt.xlabel('True Class', fontsize=12)
-    plt.ylabel('Accuracy', fontsize=12)
-    plt.title(f'Per-Class Accuracy Summary - {task_name}', fontsize=14, fontweight='bold')
-    plt.xticks(x, class_names, rotation=45, ha='right')
-    plt.ylim(0, 1.1)
-    plt.grid(axis='y', alpha=0.3)
-    
-    # Aggiungi linea per accuracy media
-    overall_acc = np.sum([acc * total for acc, total in zip(class_accuracies, class_totals)]) / np.sum(class_totals)
-    if np.sum(class_totals) > 0:
-        plt.axhline(y=overall_acc, color='blue', linestyle='--', linewidth=2, 
-                   label=f'Overall Accuracy: {overall_acc:.3f}')
-        plt.legend()
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'accuracy_summary_{task_name.lower()}.png'), 
-                dpi=300, bbox_inches='tight')
-    plt.close()
-
 def discover_checkpoints(ckpt_dir, save_type="bacc"):
     """Discover model checkpoints and features."""
     ckpt_dir = os.path.abspath(ckpt_dir)
@@ -439,8 +367,6 @@ def validate(model, dataloader, device, use_tqdm=True):
     
     # GPU counters for efficiency
     total_correct_top1 = torch.zeros(3, device=device, dtype=torch.long)
-    total_correct_top2 = torch.zeros(3, device=device, dtype=torch.long)
-    total_correct_1bin = torch.zeros(3, device=device, dtype=torch.long)
     total_samples = torch.zeros(3, device=device, dtype=torch.long)
     
     # Accumulate labels on GPU
@@ -452,9 +378,8 @@ def validate(model, dataloader, device, use_tqdm=True):
     for batch_idx, (images, labels) in enumerate(iterator):
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        
-        with torch.amp.autocast('cuda', enabled=device.type=='cuda'):
-            logits = model.forward(images)
+                
+        logits = model.forward(images)
         
         for task_idx, task_logits in enumerate(logits):
             if task_logits is None:
@@ -468,39 +393,27 @@ def validate(model, dataloader, device, use_tqdm=True):
             valid_labels = task_labels[valid_mask]
             valid_logits = task_logits[valid_mask]
             
-            # Calcola top-k predictions in modo sicuro
-            k = min(2, valid_logits.size(-1))
-            topk_preds = valid_logits.topk(k, dim=-1).indices
+            # Calculate only top-1 predictions using argmax
+            preds = torch.argmax(valid_logits, dim=-1)
             
             # Accumulate predictions
             all_true_gpu[task_idx].append(valid_labels)
-            all_pred_gpu[task_idx].append(topk_preds[:, 0])
+            all_pred_gpu[task_idx].append(preds)
             
-            # Compute accuracies
-            top1_correct = (topk_preds[:, 0] == valid_labels)
+            # Compute top-1 accuracy
+            top1_correct = (preds == valid_labels)
             total_correct_top1[task_idx] += top1_correct.sum()
             total_samples[task_idx] += valid_labels.numel()
             
-            # Top-2 accuracy solo se abbiamo almeno 2 classi
-            if k >= 2:
-                top2_correct = topk_preds.eq(valid_labels.unsqueeze(1)).any(dim=1)
-                total_correct_top2[task_idx] += top2_correct.sum()
-            else:
-                total_correct_top2[task_idx] += top1_correct.sum()
-            
-            # 1-bin accuracy for age task only
-            if task_idx == 0:
-                onebin_correct = (topk_preds[:, 0] - valid_labels).abs() <= 1
-                total_correct_1bin[task_idx] += onebin_correct.sum()
-    
     # Convert to CPU once with safe division
-    denom = total_samples.clamp_min(1).float()
-    top1_accuracy = (total_correct_top1.float() / denom).cpu().tolist()
-    top2_accuracy = (total_correct_top2.float() / denom).cpu().tolist()
+    top1_accuracy = torch.zeros(3, dtype=torch.float)
+    for i in range(3):
+        if total_samples[i] > 0:
+            top1_accuracy[i] = (total_correct_top1[i].float() / total_samples[i].float()).cpu()
+        else:
+            top1_accuracy[i] = torch.tensor(-1.0)  # Use -1 to indicate no data for this task
     
-    onebin_accuracy = [0.0, 0.0, 0.0]
-    if total_samples[0] > 0:
-        onebin_accuracy[0] = (total_correct_1bin[0].float() / denom[0]).cpu().item()
+    top1_accuracy = top1_accuracy.tolist()
     
     # Convert predictions to CPU
     all_true_labels = []
@@ -519,11 +432,11 @@ def validate(model, dataloader, device, use_tqdm=True):
     for i, name in enumerate(task_names):
         if total_samples[i] > 0:
             print(f"{name}: {total_samples[i].item()} samples, "
-                  f"Top-1: {top1_accuracy[i]:.4f}, Top-2: {top2_accuracy[i]:.4f}")
-            if i == 0 and onebin_accuracy[0] > 0:
-                print(f"  1-bin accuracy: {onebin_accuracy[0]:.4f}")
+                  f"Top-1: {top1_accuracy[i]:.4f}")
+        else:
+            print(f"{name}: No valid samples")
     
-    return top1_accuracy, top2_accuracy, onebin_accuracy, all_true_labels, all_pred_labels
+    return top1_accuracy, all_true_labels, all_pred_labels
 
 def create_final_summary_table(results_data, output_dir):
     """Create a final summary table with all datasets and their accuracies."""
@@ -537,34 +450,51 @@ def create_final_summary_table(results_data, output_dir):
     rows = []
     
     overall_totals = [0.0, 0.0, 0.0]  # To calculate grand averages
+    overall_valid_counts = [0, 0, 0]  # To track valid tasks
     
     for dataset_name, metrics in results_data.items():
         top1_acc = metrics['top1_acc']
-        avg_acc = sum(top1_acc) / len(top1_acc) if top1_acc else 0.0
         
-        # Add to overall totals
+        # Calculate average only for valid tasks (>= 0)
+        valid_accs = [acc for acc in top1_acc if acc >= 0]
+        avg_acc = sum(valid_accs) / len(valid_accs) if valid_accs else -1.0
+        
+        # Add to overall totals only for valid tasks
         for i, acc in enumerate(top1_acc):
-            overall_totals[i] += acc
+            if acc >= 0:
+                overall_totals[i] += acc
+                overall_valid_counts[i] += 1
         
         rows.append([
             dataset_name,
-            f"{top1_acc[0]:.4f}" if len(top1_acc) > 0 else "N/A",
-            f"{top1_acc[1]:.4f}" if len(top1_acc) > 1 else "N/A", 
-            f"{top1_acc[2]:.4f}" if len(top1_acc) > 2 else "N/A",
-            f"{avg_acc:.4f}"
+            f"{top1_acc[0]:.4f}" if top1_acc[0] >= 0 else "-",
+            f"{top1_acc[1]:.4f}" if top1_acc[1] >= 0 else "-", 
+            f"{top1_acc[2]:.4f}" if top1_acc[2] >= 0 else "-",
+            f"{avg_acc:.4f}" if avg_acc >= 0 else "-"
         ])
-    
     # Add grand averages row
-    num_datasets = len(results_data)
-    if num_datasets > 0:
-        grand_avg = sum(overall_totals) / (3 * num_datasets)
-        rows.append([
-            "GRAND AVERAGE",
-            f"{overall_totals[0]/num_datasets:.4f}",
-            f"{overall_totals[1]/num_datasets:.4f}",
-            f"{overall_totals[2]/num_datasets:.4f}",
-            f"{grand_avg:.4f}"
-        ])
+    grand_avg_values = []
+    grand_avg_sum = 0
+    valid_task_count = 0
+    
+    for i in range(3):
+        if overall_valid_counts[i] > 0:
+            avg = overall_totals[i] / overall_valid_counts[i]
+            grand_avg_values.append(f"{avg:.4f}")
+            grand_avg_sum += avg
+            valid_task_count += 1
+        else:
+            grand_avg_values.append("-")
+    
+    grand_avg = grand_avg_sum / valid_task_count if valid_task_count > 0 else -1.0
+    
+    rows.append([
+        "GRAND AVERAGE",
+        grand_avg_values[0],
+        grand_avg_values[1],
+        grand_avg_values[2],
+        f"{grand_avg:.4f}" if grand_avg >= 0 else "-"
+    ])
     
     # Format and save table
     table_str = format_table(headers, rows)
@@ -575,8 +505,9 @@ def create_final_summary_table(results_data, output_dir):
         f.write(table_str)
         f.write("\n\nNotes:\n")
         f.write("- Top-1 accuracies shown for each task\n")
-        f.write("- Average Top-1 is the mean across the three tasks\n")
-        f.write("- Grand Average is the mean across all datasets\n")
+        f.write("- '-' indicates no valid data for the task\n")
+        f.write("- Average Top-1 is the mean across valid tasks only\n")
+        f.write("- Grand Average is the mean across all datasets with valid data\n")
     
     print("\n" + "="*50)
     print("MULTI-DATASET EVALUATION SUMMARY")
@@ -600,17 +531,9 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
         dataset_name = os.path.basename(os.path.normpath(dataset_path))
         output_dir = os.path.join(base_out, dataset_name)
         
-        # Create temporary args for single dataset evaluation
-        single_args = type(args)()
-        for attr in dir(args):
-            if not attr.startswith('_'):
-                setattr(single_args, attr, getattr(args, attr))
-        single_args.dataset_paths = [dataset_path]
-        single_args.output_path = output_dir
-        
         print(f"\n=== Evaluating {dataset_name} ===")
         
-        # Evaluate single dataset and capture results
+        # Evaluate dataset
         os.makedirs(output_dir, exist_ok=True)
         
         dataset = BaseDataset(dataset_path, transform=image_processor, split="test", verbose=False)
@@ -622,20 +545,18 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
         print(f"Evaluating on dataset: {dataset_path}")
         print(f"Dataset size: {len(dataset)} samples")
         
-        top1_acc, top2_acc, onebin_acc, all_true, all_pred = validate(
+        top1_acc, all_true, all_pred = validate(
             model, dataloader, device, not args.no_tqdm
         )
         
         # Store results for final summary
         results_data[dataset_name] = {
-            'top1_acc': top1_acc,
-            'top2_acc': top2_acc,
-            'onebin_acc': onebin_acc
+            'top1_acc': top1_acc
         }
         
         # Compute metrics and save results for this dataset
         prf_task = compute_prf_metrics(all_true, all_pred)
-        write_results(output_dir, top1_acc, top2_acc, onebin_acc, prf_task)
+        write_results(output_dir, top1_acc, prf_task)
         
         # Save confusion matrices
         task_names = ["Age", "Gender", "Emotion"]
@@ -651,37 +572,6 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
         create_final_summary_table(results_data, base_out)
     
     print(f"\nCompleted evaluation on {len(results_data)} datasets")
-
-def evaluate_single_dataset(model, image_processor, device, args):
-    """Evaluate on single dataset."""
-    os.makedirs(args.output_path, exist_ok=True)
-    
-    dataset_path = args.dataset_paths[0] if args.dataset_paths else args.dataset_path
-    dataset = BaseDataset(dataset_path, transform=image_processor, split="test", verbose=False)
-    dataloader = DataLoader(
-        dataset, batch_size=args.batch_size, shuffle=False, 
-        num_workers=min(8, os.cpu_count() or 0), pin_memory=(device.type=='cuda')
-    )
-    
-    print(f"Evaluating on dataset: {dataset_path}")
-    print(f"Dataset size: {len(dataset)} samples")
-    
-    top1_acc, top2_acc, onebin_acc, all_true, all_pred = validate(
-        model, dataloader, device, not args.no_tqdm
-    )
-    
-    # Compute metrics and save results
-    prf_task = compute_prf_metrics(all_true, all_pred)
-    write_results(args.output_path, top1_acc, top2_acc, onebin_acc, prf_task)
-    
-    # Save confusion matrices
-    task_names = ["Age", "Gender", "Emotion"]
-    cm_dir = os.path.join(args.output_path, "confusion_matrices")
-    hist_dir = os.path.join(args.output_path, "class_histograms")
-    for i, (true, pred) in enumerate(zip(all_true, all_pred)):
-        if true and pred:
-            save_confusion_matrix(true, pred, CLASSES[i], task_names[i], cm_dir)
-            save_class_histograms(true, pred, CLASSES[i], task_names[i], hist_dir)
 
 def main(args):
     """Main evaluation function."""
@@ -706,13 +596,8 @@ def main(args):
         args.output_path = args.ckpt_dir.replace("TRAIN", "TEST").split("ckpt")[0]
         print(f"Output path not specified, using {args.output_path}")
     
-    # Handle single or multiple datasets
-    if len(args.dataset_paths) == 1 and not os.path.isdir(args.dataset_paths[0]):
-        # Single dataset file
-        evaluate_single_dataset(model, image_processor, device, args)
-    else:
-        # Multiple datasets or directories
-        evaluate_multiple_datasets(model, image_processor, device, args)
+    # Use the multiple datasets evaluation logic for all cases
+    evaluate_multiple_datasets(model, image_processor, device, args)
 
 def parse_args():
     """Parse command line arguments."""
