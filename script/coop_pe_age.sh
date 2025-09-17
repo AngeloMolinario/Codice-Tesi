@@ -3,7 +3,7 @@
 echo "#######################################################################"
 echo "##                  TRAINING EMOTION ON COOP 15                      ##"
 echo "#######################################################################"
-python3 coop_train.py config/coop/age/PE_coop_15.json
+#python3 coop_train.py config/coop/age/PE_coop_15.json
 
 echo "#######################################################################"
 echo "##                  TRAINING EMOTION ON COOP 20                      ##"
