@@ -293,7 +293,7 @@ def main():
         if any(trainable_param in name for trainable_param in config.NAMED_TRAINABLE_PARAMETERS):
             param.requires_grad = True
             # Separazione parametri basata sul nome
-            if 'visual' in name or 'vision' in name or 'vpt' in name or 'prompt' in name:
+            if 'visual' in name or 'vision' in name or 'vpt' in name:
                 vision_params.append(param)
             else:  # CoOp parameters (text context, logit_scale, logit_bias, etc.)
                 coop_params.append(param)
