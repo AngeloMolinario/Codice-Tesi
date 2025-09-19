@@ -1,5 +1,5 @@
 {
-    "TUNING" : "vpt",
+    "TUNING" : "coop",
     "MODEL"  : "pecore",
     "TASK"   : 0,
     "MODEL_TYPE" : "PE-Core-L14-336",

@@ -1,5 +1,5 @@
 {
-    "TUNING" : "vpt",
+    "TUNING" : "coop",
     "MODEL"  : "pecore",
     "TASK"   : 1,
     "MODEL_TYPE" : "PE-Core-L14-336",
@@ -34,7 +34,7 @@
 
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BATCH_SIZE" : 64,
-    "NUM_WORKERS" : 12,
+    "NUM_WORKERS" : 3,
     "LR" : 2e-3,
     "OUTPUT_DIR" : "../TRAIN/PECore/L14/vpt/Gender_cntx_25_vpt_10/",
     "VERBOSE": true,

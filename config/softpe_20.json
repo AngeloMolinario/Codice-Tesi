@@ -30,14 +30,14 @@
     "EMD_MU": -0.0025,
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 512,
-    "NUM_WORKERS" : 12,
+    "BATCH_SIZE" : 256,
+    "NUM_WORKERS" : 3,
     "LR" : 0.002,
     "OUTPUT_DIR" : "../TRAIN/PECore/L14/SoftCPT/TSCA_cntx_20",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
     "USE_TQDM": false,
-    "EPOCHS" : 10,
-    "PATIENCE" : 15
+    "EPOCHS" : 20,
+    "PATIENCE" : 5
 
 }
