@@ -52,7 +52,7 @@ def get_loss_fn(config, weights=None):
 
 
 
-def single_task_train_fn(model, dataloader, optimizer, loss_fn, device, config, text_features=None, scaler=None):
+def single_task_train_fn(model, dataloader, optimizer, loss_fn, device, config, scaler=None):
     ''' Gestisce unicamente il VPT'''
     model.train()    
     iterator = tqdm(dataloader) if config.USE_TQDM else dataloader        
@@ -61,13 +61,6 @@ def single_task_train_fn(model, dataloader, optimizer, loss_fn, device, config, 
     total_loss_sum = 0.0
     preds_list = []
     labels_list = []
-    
-    
-    if text_features is not None:
-        print("Using precomputed text features")
-        computed_text_features = text_features.T.contiguous()        
-    else:
-        computed_text_features = None
 
     num_batch = 0
     for image, label in iterator:
@@ -87,10 +80,9 @@ def single_task_train_fn(model, dataloader, optimizer, loss_fn, device, config, 
         # Use mixed precision on CUDA when available
         with autocast(device_type=device):
             image_features = model.get_image_features(image, normalize=True)
-            if text_features is None:                
-                computed_text_features = model.get_text_features(normalize=True).T
+            text_features = model.get_text_features(normalize=True).T
 
-            logits =  scale * (image_features @ computed_text_features) + bias
+            logits =  scale * (image_features @ text_features) + bias
             loss = loss_fn(logits, labels)
             pred = logits.argmax(dim=1)
 
@@ -123,12 +115,10 @@ def single_task_train_fn(model, dataloader, optimizer, loss_fn, device, config, 
     
     return [mean_loss], [accuracy]  # Ritorna liste per compatibilità con il codice esistente
 
-def single_task_val_fn(model, dataloader, loss_fn, device, config, text_features=None):
+def single_task_val_fn(model, dataloader, loss_fn, device, config):
     model.eval()
-    compute_text_features = text_features is None
 
     iterator = tqdm(dataloader) if config.USE_TQDM else dataloader
-
 
     # Accumulatori
     total_loss_sum = 0.0
@@ -137,8 +127,6 @@ def single_task_val_fn(model, dataloader, loss_fn, device, config, text_features
     probs_list = []
 
     num_batch = 0
-    if text_features is not None:
-        text_features = text_features.T.contiguous()
 
     with torch.inference_mode():
         for image, label in iterator:
@@ -147,9 +135,7 @@ def single_task_val_fn(model, dataloader, loss_fn, device, config, text_features
             image = image.to(device, non_blocking=True)
             labels = label[:, config.TASK].to(device, non_blocking=True)
 
-            if compute_text_features:
-                text_features = model.get_text_features(normalize=True).T
-
+            text_features = model.get_text_features(normalize=True).T
 
             scale = 1.0
             if hasattr(model, 'logit_scale'):
@@ -261,7 +247,6 @@ def main():
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
     model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
 
-
     print(f"MODEL LOGIT SCALE {model.logit_scale}")
 
     # Get the training and validation dataset
@@ -287,8 +272,6 @@ def main():
     # Get the loss function
     weights = training_set.get_class_weights(config.TASK, 'normalized_inverse_sqrt').to(DEVICE)
 
-
-
     train_loader = DataLoader(
         dataset=training_set,
         batch_size=config.BATCH_SIZE,
@@ -302,55 +285,72 @@ def main():
     loss_fn = get_loss_fn(config, weights=weights)
 
     # Create optimizer
-    params = []
-    coop_param = []
+    vision_params = []
+    coop_params = []
     total_trainable_params = 0
+    
     for name, param in model.named_parameters():
         if any(trainable_param in name for trainable_param in config.NAMED_TRAINABLE_PARAMETERS):
             param.requires_grad = True
-            if hasattr(config, "PRETRAINED_COOP"):
-                if 'visual' in name:
-                    params += [param]
-                    total_trainable_params += param.numel()
-                else:
-                    coop_param += [param]
-                    total_trainable_params += param.numel()
-            else:
-                params += [param]
-                total_trainable_params += param.numel()
+            # Separazione parametri basata sul nome
+            if 'visual' in name or 'vision' in name or 'vpt' in name or 'prompt' in name:
+                vision_params.append(param)
+            else:  # CoOp parameters (text context, logit_scale, logit_bias, etc.)
+                coop_params.append(param)
+            total_trainable_params += param.numel()
             print(f"Parameter: {name}, shape: {param.shape}, numel: {param.numel()}")
         else:
             param.requires_grad = False
 
-    optimizer = torch.optim.AdamW(
-            [
-                {"params": params, "lr": config.LR, "weight_decay": 0.0, "name": "vision_group"},
-                {"params": coop_param, "lr": config.LR * 0.1, "weight_decay": 0.0, "name": "coop_group"},
-            ],
-            foreach=True
-        )
+    # Create optimizer groups dynamically based on what parameters are available
+    optimizer_groups = []
+    
+    if vision_params:
+        optimizer_groups.append({
+            "params": vision_params, 
+            "lr": config.LR, 
+            "weight_decay": 0.0, 
+            "name": "vision_group"
+        })
+        print(f"Vision group: {len(vision_params)} parameter groups")
+    
+    if coop_params:
+        # Use lower learning rate for CoOp if we have pretrained CoOp, otherwise use same LR
+        coop_lr = config.LR * 0.1 if hasattr(config, "PRETRAINED_COOP") else config.LR
+        optimizer_groups.append({
+            "params": coop_params, 
+            "lr": coop_lr, 
+            "weight_decay": 0.0, 
+            "name": "coop_group"
+        })
+        print(f"CoOp group: {len(coop_params)} parameter groups (lr: {coop_lr})")
+    
+    if not optimizer_groups:
+        raise ValueError("No trainable parameters found!")
+    
+    optimizer = torch.optim.AdamW(optimizer_groups, foreach=True)
     # GradScaler for mixed precision
     scaler = GradScaler(device=DEVICE)
     # CosineAnnealingLR scheduler
     scheduler = CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=1e-6)
     lr_history = [optimizer.param_groups[0]['lr']]
-    ''' ---------------------- TO REMOVE ONLY FOR DEBUGGING PURPOSES -------------------------'''
-
+    ''' ---------------------- DEBUGGING: Show optimizer groups -------------------------'''
     param_to_name = {p: n for n, p in model.named_parameters()}
 
     # Itera sui param_groups dell'optimizer
     for group_idx, group in enumerate(optimizer.param_groups):
-        print(f"\nParam group {group_idx}: lr={group['lr']}, weight_decay={group.get('weight_decay', 0)}")
+        group_name = group.get('name', f'group_{group_idx}')
+        print(f"\nParam group '{group_name}': lr={group['lr']}, weight_decay={group.get('weight_decay', 0)}")
         total_params_group = 0
         for p in group['params']:
             name = param_to_name.get(p, "<unknown>")
             numel = p.numel()
             total_params_group += numel
             print(f"  {name}: shape={tuple(p.shape)}, numel={numel}")
-        print(f"  → Totale parametri in questo gruppo: {total_params_group}")
-
-    ''' -------------------------------  TO HERE --------------------------------------------'''
-
+        print(f"  → Total parameters in this group: {total_params_group}")
+    
+    print(f"\nTotal trainable parameters: {total_trainable_params}")
+    ''' -------------------------------  END DEBUGGING --------------------------------------------'''
 
     print(f"\nLoaded Model: {type(model)}")
     print(f"\nTraining set {type(training_set)} of size: {len(training_set)}")
@@ -383,28 +383,15 @@ def main():
     os.makedirs(os.path.join(config.OUTPUT_DIR, task_names[0]), exist_ok=True)
     train_fn = single_task_train_fn
     val_fn = single_task_val_fn
- 
-    '''
-    if config.TUNING == "coop" or config.TUNING == "mixed" or hasattr(config, "TEXT_FEATURES_PATH"):
-        text_features = None
-    else:
-        text_features = torch.load(config.TEXT_FEATURES_PATH, map_location="cpu").to(DEVICE)
-        torch.save(text_features, os.path.join(config.OUTPUT_DIR, "ckpt/text_features.pt"))
 
-        #text_features = torch.split(text_features, (9,2,7))[config.TASK]
-        print(f"text_features task shape {text_features.shape}")
-    '''
-    text_features = None
     model.save_vision_model(os.path.join(config.OUTPUT_DIR, "ckpt"), filename="vision_ckpt.pt")
         
-
     for epoch in range(config.EPOCHS):
-
 
         ################## TRAINING LOOP ##################
         print(f"\n[Epoch {epoch+1} - TRAIN]", flush=True)
         start_time = time.time()
-        train_loss, train_acc = train_fn(model, train_loader, optimizer, loss_fn, DEVICE, config, text_features, scaler)
+        train_loss, train_acc = train_fn(model, train_loader, optimizer, loss_fn, DEVICE, config, scaler)
         end_time = time.time()
         epoch_duration = end_time - start_time
         formatted = time.strftime("%H:%M:%S", time.gmtime(epoch_duration)) + f".{int((epoch_duration % 1) * 100):02d}"
@@ -414,11 +401,10 @@ def main():
         tracker.update_loss(0, train_loss[0], train=True)
         tracker.update_accuracy(0, train_acc[0], train=True)
 
-
         ################## VALIDATION LOOP ##################
         print(f"\n[Epoch {epoch+1} - VAL]", flush=True)
         start_time = time.time()
-        val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, config, model.get_text_features(normalize=True) if text_features is None else text_features)
+        val_loss, val_acc, all_preds_list, all_labels_list, all_probs_list = val_fn(model, val_loader, loss_fn, DEVICE, config)
         end_time = time.time()
         epoch_duration = end_time - start_time
         formatted = time.strftime("%H:%M:%S", time.gmtime(epoch_duration)) + f".{int((epoch_duration % 1) * 100):02d}"
@@ -464,10 +450,11 @@ def main():
                 write_to_file(os.path.join(config.OUTPUT_DIR, "ckpt/best_accuracy.txt"), f"{best_accuracy:.4f} -> {val_acc[0]:.4f} at epoch {epoch+1}\n")
                 best_accuracy = val_acc[0]
             
-            if text_features is None:
-                with torch.inference_mode():
-                    text_features_to_save = model.get_text_features(normalize=True)
-                    torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bval.pt"))
+            # Save text features when achieving best performance
+            with torch.inference_mode():
+                text_features_to_save = model.get_text_features(normalize=True)
+                torch.save(text_features_to_save, os.path.join(config.OUTPUT_DIR, "ckpt/text_features_bval.pt"))
+            
             if config.NUM_VISUAL_PROMPT > 0:
                 model.save_vpt_token(os.path.join(config.OUTPUT_DIR, "ckpt/vpt_token_bval.pt"))
             if "logit_scale" in config.NAMED_TRAINABLE_PARAMETERS:
@@ -484,7 +471,6 @@ def main():
             print("Early stopping triggered.")
             break
 
-        
         scheduler.step()
         lr_history.append(optimizer.param_groups[0]['lr'])
 
@@ -497,9 +483,6 @@ def main():
         plt.grid(True)
         plt.savefig(os.path.join(config.OUTPUT_DIR, "learning_rate_plot.png"))
         plt.close()
-
-    # Save the full model at the end of training
-    #torch.save(model.state_dict(), os.path.join(config.OUTPUT_DIR, "full_training_model.pt"))
 
 
 if __name__ == "__main__":
