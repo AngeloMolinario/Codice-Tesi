@@ -134,15 +134,44 @@ def get_tokenizer(config):
     if config.MODEL.lower() == 'pecore':
         return PETokenizer.get_instance(32) # The PECore model used has a context length of 32
     elif config.MODEL.lower() == 'siglip2':
-        return SigLip2Tokenizer.get_instance(64) # The Siglip2 model used has a contenxt length of 64
+        return SigLip2Tokenizer.get_instance(64) # The Siglip2 model used has a context length of 64
 
 def get_model(config):
-    ''' This method look at the configuration file and return the correct model initialized with pretrained weights and the specified attributes'''
+    ''' 
+    This method looks at the configuration file and returns the correct model initialized with pretrained weights and the specified attributes.
+    CoOp is only supported for single-task scenarios.
+    SoftCPT is only supported for multi-task scenarios.
+    
+    Supported configurations:
+    - CoOp/SoftCPT only: NUM_VISUAL_PROMPT = 0, NUM_TEXT_CNTX > 0
+    - CoOp/SoftCPT + VPT: NUM_VISUAL_PROMPT > 0, NUM_TEXT_CNTX > 0
+    - VPT only is NOT supported
+    '''
     tuning = config.TUNING.lower()
     model_name = config.MODEL.lower()
-    if tuning == 'coop' or hasattr(config, "PRETRAINED_COOP"):
+    
+    # Validate configuration: VPT only is not supported
+    if config.NUM_VISUAL_PROMPT > 0 and config.NUM_TEXT_CNTX == 0:
+        raise ValueError("VPT-only configuration is not supported. If NUM_VISUAL_PROMPT > 0, then NUM_TEXT_CNTX must also be > 0.")
+    
+    if config.NUM_TEXT_CNTX == 0:
+        raise ValueError("NUM_TEXT_CNTX must be > 0. Pure VPT without CoOp/SoftCPT is not supported.")
+    
+    # Determine if we're doing single-task or multi-task based on config.TASK
+    is_single_task = (config.TASK != -1)
+    
+    if tuning == 'coop':
+        # CoOp Model - only for single-task scenarios
+        if not is_single_task:
+            raise ValueError("CoOp tuning is only supported for single-task scenarios. For multi-task, use SoftCPT tuning.")
+            
         if model_name == "pecore":
-            base_model = PECore.from_config(config.MODEL_TYPE, pretrained=True, num_prompt=config.NUM_VISUAL_PROMPT)
+            base_model = PECore.from_config(
+                config.MODEL_TYPE, 
+                pretrained=True, 
+                num_prompt=config.NUM_VISUAL_PROMPT
+            )
+            
             model = CoopModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 classes=config.CLASSES[config.TASK],
@@ -150,12 +179,18 @@ def get_model(config):
                 tokenizer=get_tokenizer(config)
             )
             return model
+            
         elif model_name == "siglip2":
             base_model = Siglip2Model(
                 config=AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            base_model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
+            base_model.load_model(
+                path=f"./hf_models/{config.MODEL_TYPE.split('/')[-1].replace('-','_')}.pt", 
+                map_location="cpu", 
+                repo_id=config.MODEL_TYPE
+            )
+                
             model = CoopModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 classes=config.CLASSES[config.TASK],
@@ -166,12 +201,17 @@ def get_model(config):
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
-    if tuning == "softcpt":
+    elif tuning == "softcpt":
+        # SoftCPT Model - only for multi-task scenarios
+        if is_single_task:
+            raise ValueError("SoftCPT tuning is only supported for multi-task scenarios. For single-task, use CoOp tuning.")
+            
         if model_name == "pecore":
             base_model = PECore.from_config(
                 config.MODEL_TYPE,
                 pretrained=True,
-                num_prompt=config.NUM_VISUAL_PROMPT)
+                num_prompt=config.NUM_VISUAL_PROMPT
+            )
             model = CustomModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 tasknames=config.TASK_NAMES,
@@ -187,7 +227,11 @@ def get_model(config):
                 config=AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
                 num_prompts=config.NUM_VISUAL_PROMPT
             )
-            base_model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
+            base_model.load_model(
+                path=f"./hf_models/{config.MODEL_TYPE.split('/')[-1].replace('-','_')}.pt", 
+                map_location="cpu", 
+                repo_id=config.MODEL_TYPE
+            )
             model = CustomModel(
                 n_ctx=config.NUM_TEXT_CNTX,
                 tasknames=config.TASK_NAMES,
@@ -200,30 +244,8 @@ def get_model(config):
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
-    elif tuning == "vpt":
-        if model_name == "pecore":
-            model = PECore.from_config(
-                config.MODEL_TYPE,
-                pretrained=True,
-                num_prompt=config.NUM_VISUAL_PROMPT
-            )
-            return model
-        
-        elif model_name == "siglip2":
-            model = Siglip2Model(
-                config = AutoConfig.from_pretrained(config.MODEL_TYPE, cache_dir="./hf_models"),
-                num_prompts=config.NUM_VISUAL_PROMPT
-            )
-            model.load_model(path=f"./hf_models/{config.MODEL_TYPE.split("/")[-1].replace("-","_")}.pt", map_location="cpu", repo_id=config.MODEL_TYPE)
-            return model
-        
-        else:
-            raise ValueError(f"Unknown model name: {model_name}")
-    
-    elif tuning == "vvpt":
-        raise NotImplementedError(f"Model {model_name} is not implemented for VVPT tuning.")
     else:
-        raise ValueError(f"Unknown tuning method: {tuning}")
+        raise ValueError(f"Unsupported tuning method: {tuning}. Only 'coop' (single-task) and 'softcpt' (multi-task) are supported.")
 
 def get_dataset(config, split, transform=None, augmentation_transform=None):
 
@@ -295,7 +317,7 @@ def analyze_age_errors(all_preds_list, all_labels_list, all_probs_list, class_na
             ax.text(rect.get_x() + rect.get_width() / 2.0, y, f"{h:.2f}",
                     ha="center", va="bottom", fontsize=9)
 
-    # --- 1 - Distribuzione di probabilità  per ogni classe (salvata separatamente)
+    # --- 1 - Distribuzione di probabilità per ogni classe (salvata separatamente)
     prob_dir = os.path.join(output_dir, "Prob_distribution_per_class")
     os.makedirs(prob_dir, exist_ok=True)
 
@@ -422,7 +444,7 @@ def analyze_age_errors(all_preds_list, all_labels_list, all_probs_list, class_na
     plt.savefig(os.path.join(output_dir, "3b_error_distribution_absolute.png"))
     plt.close()
 
-    # --- 4 - ProbabilitÃ  medie di scelta
+    # --- 4 - Probabilità medie di scelta
     prob_matrix = np.zeros((num_classes, num_classes), dtype=np.float32)
     for c in range(num_classes):
         mask = labels == c
@@ -434,7 +456,7 @@ def analyze_age_errors(all_preds_list, all_labels_list, all_probs_list, class_na
                 xticklabels=class_names, yticklabels=class_names, cmap="YlOrRd")
     plt.xlabel("Classe Predetta")
     plt.ylabel("Classe Reale")
-    plt.title("ProbabilitÃ  media di scelta (Task 0 - Age)")
+    plt.title("Probabilità media di scelta (Task 0 - Age)")
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "4_avg_prob_matrix.png"))
     plt.close()
