@@ -605,8 +605,8 @@ def main():
                 torch.save(model.logit_bias, os.path.join(config.OUTPUT_DIR, "ckpt/logit_bias_bval.pt"))
 
             if config.NUM_TEXT_CNTX > 0:
-                model.save_coop_token(os.path.join(config.OUTPUT_DIR, "ckpt/coop_token_bval.pt"))
-                print("Saved CoOp token for best validation performance.")
+                model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, "ckpt/softCPT_token_bval.pt"))
+                print("Saved SoftCPT token for best validation performance.")
 
             epochs_without_improvement = 0
         else:

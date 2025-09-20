@@ -5,3 +5,5 @@ timm
 scikit-learn
 ftfy
 einops
+torch
+torchvision
