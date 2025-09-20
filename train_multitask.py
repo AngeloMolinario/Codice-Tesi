@@ -605,7 +605,7 @@ def main():
                 torch.save(model.logit_bias, os.path.join(config.OUTPUT_DIR, "ckpt/logit_bias_bval.pt"))
 
             if config.NUM_TEXT_CNTX > 0:
-                model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, "ckpt/softCPT_token_bval.pt"))
+                model.save_softCPT_token(os.path.join(config.OUTPUT_DIR, "ckpt/softCPT_tokens_bval.pt"))
                 print("Saved SoftCPT token for best validation performance.")
 
             epochs_without_improvement = 0
