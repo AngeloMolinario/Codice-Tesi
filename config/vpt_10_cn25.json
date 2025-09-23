@@ -38,7 +38,7 @@
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
     "USE_TQDM": false,
-    "EPOCHS" : 20,
-    "PATIENCE" : 5
+    "EPOCHS" : 50,
+    "PATIENCE" : 7
 
 }
