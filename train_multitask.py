@@ -297,7 +297,7 @@ def main():
     model = get_model(config).to(DEVICE)
     if hasattr(config, "PRETRAINED_COOP"):
         print(f"Loading pretrained checkpoint from {config.PRETRAINED_COOP}")
-        model.load_coop_token(config.PRETRAINED_COOP)
+        model.load_softCPT_token(config.PRETRAINED_CPT)
         model.to(DEVICE)
         print("Pretrained weights loaded.")
 

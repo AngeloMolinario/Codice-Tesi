@@ -539,7 +539,7 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
         dataset = BaseDataset(dataset_path, transform=image_processor, split="test", verbose=False)
         dataloader = DataLoader(
             dataset, batch_size=args.batch_size, shuffle=False, 
-            num_workers=min(8, os.cpu_count() or 0), pin_memory=(device.type=='cuda')
+            num_workers=3
         )
         
         print(f"Evaluating on dataset: {dataset_path}")

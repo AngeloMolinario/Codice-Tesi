@@ -22,7 +22,7 @@
         "-1" : ["FairFace", "RAF-DB", "CelebA_HQ", "Lagenda"]     
     },
 
-    "PRETRAINED_COOP" : "../TRAIN/PECore/L14/SoftCPT/TSCA_cntx_15/ckpt/softCPT_tokens_bval.pt",
+    "PRETRAINED_CPT" : "../TRAIN/PECore/L14/SoftCPT/TSCA_cntx_15/ckpt/softCPT_tokens_bval.pt",
 
 
     "CSP": false,
