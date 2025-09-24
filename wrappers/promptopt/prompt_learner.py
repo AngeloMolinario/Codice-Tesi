@@ -494,6 +494,33 @@ class CustomModel(nn.Module):
         }, save_path)
         print(f"[CustomModel] SoftCPT token salvati in: {save_path}")
 
+    def load_softCPT_token(self, ckpt_dir):
+        try:
+            checkpoint = torch.load(ckpt_dir, map_location="cpu")
+            required_keys = ['prompt_learner', 'task_prompt_learner', 'prompt_gen']
+            missing_keys = [key for key in required_keys if key not in checkpoint]
+            if 'prompt_learner' in checkpoint and checkpoint['prompt_learner'] is not None:
+                self.prompt_learner.load_state_dict(checkpoint['prompt_learner'])
+                print(f"[CustomModel] Prompt learner token caricati da: {ckpt_dir}")
+            if 'task_prompt_learner' in checkpoint and checkpoint['task_prompt_learner'] is not None:
+                self.task_prompt_learner.load_state_dict(checkpoint['task_prompt_learner'])
+                print(f"[CustomModel] Task prompt learner token caricati da: {ckpt_dir}")
+            if 'class_prompt_learner' in checkpoint and checkpoint['class_prompt_learner'] is not None and self.cls_spc:
+                self.class_prompt_learner.load_state_dict(checkpoint['class_prompt_learner'])
+                print(f"[CustomModel] Class prompt learner token caricati da: {ckpt_dir}")
+            if 'prompt_gen' in checkpoint and checkpoint['prompt_gen'] is not None:
+                self.prompt_gen.load_state_dict(checkpoint['prompt_gen'])
+                print(f"[CustomModel] Prompt generator token caricati da: {ckpt_dir}")
+        except Exception as e:
+            raise RuntimeError(f"Errore nel caricamento dei token SoftCPT da {ckpt_dir}: {e}")
+
+    def save_vpt_token(self, save_path):
+        """
+        Salva i token del prompt learner per poterli riutilizzare in futuro.
+        """
+        self.model.save_vpt_token(save_path)
+
+
 class CoopModel(nn.Module):
     def __init__(self, n_ctx, classes, model, tokenizer):
         super().__init__()        
