@@ -514,7 +514,11 @@ class CustomModel(nn.Module):
         except Exception as e:
             raise RuntimeError(f"Errore nel caricamento dei token SoftCPT da {ckpt_dir}: {e}")
 
-
+    def save_vpt_token(self, save_path):
+        """
+        Salva i token del prompt learner per poterli riutilizzare in futuro.
+        """
+        self.model.save_vpt_token(save_path)
 
 
 class CoopModel(nn.Module):
