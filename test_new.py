@@ -594,6 +594,10 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
     os.makedirs(base_out, exist_ok=True)
     
     results_data = {}  # Store results for final summary
+
+    GFLOPs = compute_GFLOPs(model, device)
+    params_count = model.get_parameters_count()
+    write_model_info(base_out, params_count, GFLOPs)
     
     for dataset_path in args.dataset_paths:
         if not os.path.exists(dataset_path):
@@ -630,9 +634,7 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
         balanced_acc = compute_balanced_accuracy(all_true, all_pred)        
         write_results(output_dir, top1_acc, balanced_acc)
 
-        GFLOPs = compute_GFLOPs(model, device)
-        params_count = model.get_parameters_count()
-        write_model_info(base_out, params_count, GFLOPs)
+        
         # Save confusion matrices
         task_names = ["Age", "Gender", "Emotion"]
         cm_dir = os.path.join(output_dir, "confusion_matrices")
