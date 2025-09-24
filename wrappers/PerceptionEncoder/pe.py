@@ -168,7 +168,6 @@ class PECore_Vision(nn.Module):
         super().__init__()
         self.visual = CustomVisionTransformer(**asdict(vision_cfg), num_prompt=num_prompt)
         self.image_size = self.visual.image_size
-        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))        
         self.num_prompt = num_prompt
         self._vpt = []       
         self.register_buffer('text_features', torch.empty(0))
@@ -335,3 +334,45 @@ class PECore_Vision(nn.Module):
             print(f"Unexpected keys for loading vision encoder: {u}")
 
         print(f"logit scale {self.logit_scale.item()}")
+
+    def get_parameters_count(self):
+        """
+        Return the number of parameters for each component as a dictionary.
+        
+        Returns:
+            dict: Dictionary with parameter counts for each component
+        """
+        param_counts = {}
+        
+        # Count logit_scale parameters
+        param_counts['logit_scale'] = sum(p.numel() for p in [self.logit_scale])
+        
+        # Count CustomVisionTransformer parameters (excluding VPT if present)
+        visual_params = 0
+        for name, param in self.visual.named_parameters():
+            if not name.startswith("prompt_learner"):
+                visual_params += param.numel()
+        param_counts['vision_transformer'] = visual_params
+        
+        # Count text_features parameters (registered buffer)
+        param_counts['text_features'] = self.text_features.numel()
+        
+        # Count VPT parameters
+        vpt_params = 0
+        for vpt in self._vpt:
+            if vpt is not None:
+                vpt_params += sum(p.numel() for p in vpt.parameters())
+        param_counts['vpt_tokens'] = vpt_params
+        
+        # Calculate total trainable parameters
+        param_counts['total_trainable'] = (
+            param_counts['logit_scale'] + 
+            param_counts['vision_transformer'] + 
+            param_counts['vpt_tokens']
+        )
+        
+        # Calculate total parameters (including non-trainable text_features)
+        param_counts['total_all'] = param_counts['total_trainable'] + param_counts['text_features']
+        
+        return param_counts
+

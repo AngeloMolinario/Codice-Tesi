@@ -2,12 +2,13 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.transforms import transforms as T
 from transformers import AutoConfig
-from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import confusion_matrix, balanced_accuracy_score
 from argparse import ArgumentParser
 from tqdm import tqdm
 import numpy as np
 import os
 from matplotlib import pyplot as plt
+from torch.profiler import profile_macs
 
 # Import your custom modules (adjust paths as needed)
 from core.vision_encoder.pe import CLIP
@@ -24,9 +25,36 @@ CLASSES = [
     ["surprise", "fear", "disgust", "happy", "sad", "angry", "neutral"]
 ]
 
-def compute_prf_metrics(all_true_labels, all_pred_labels):
-    """Compute macro Precision/Recall/F1 per task."""
-    prf_task = {"precision": [0.0, 0.0, 0.0], "recall": [0.0, 0.0, 0.0], "f1": [0.0, 0.0, 0.0]}
+def compute_GFLOPs(model, device='cpu'):
+    """Compute GFLOPs of the model (placeholder function)."""
+    
+    model.eval()
+    # Configure profiler activities
+    activities = [torch.profiler.ProfilerActivity.CPU]
+    if device == "cuda" and torch.cuda.is_available():
+        activities.append(torch.profiler.ProfilerActivity.CUDA)
+
+    try:
+        total_flops = 0
+        dummy_input = torch.randn(1, 3, model.image_size, model.image_size)
+        with torch.profiler.profile(activities=activities,record_shapes=True, with_flops=True) as prof:
+            with torch.no_grad():
+                _ = model(dummy_input.to(device))
+    # Sum all FLOPs from profiler events
+        for event in prof.events():
+            if hasattr(event, 'flops') and event.flops > 0:
+                total_flops += event.flops
+        
+        return total_flops / 1e9
+        
+    except Exception as e:
+        print(f"Profiling failed: {str(e)}. Returning 0.0")
+        return 0.0
+    
+
+def compute_balanced_accuracy(all_true_labels, all_pred_labels):
+    """Compute balanced accuracy per task."""
+    balanced_acc = [0.0, 0.0, 0.0]
     
     for task_idx in range(3):
         y_true, y_pred = all_true_labels[task_idx], all_pred_labels[task_idx]
@@ -36,16 +64,14 @@ def compute_prf_metrics(all_true_labels, all_pred_labels):
                 unique_labels = sorted(set(y_true + y_pred))
                 valid_labels = [l for l in unique_labels if 0 <= l < len(CLASSES[task_idx])]
                 
-                p, r, f1, _ = precision_recall_fscore_support(
-                    y_true, y_pred, labels=valid_labels, 
-                    average='macro', zero_division=0
-                )
-                prf_task["precision"][task_idx] = float(p)
-                prf_task["recall"][task_idx] = float(r)
-                prf_task["f1"][task_idx] = float(f1)
+                if valid_labels:
+                    balanced_acc[task_idx] = balanced_accuracy_score(y_true, y_pred)
+                else:
+                    balanced_acc[task_idx] = 0.0
             except Exception as e:
-                print(f"Warning: Error computing metrics for task {task_idx}: {e}")
-    return prf_task
+                print(f"Warning: Error computing balanced accuracy for task {task_idx}: {e}")
+    
+    return balanced_acc
 
 def format_table(headers, rows):
     """Format table without external dependencies."""
@@ -71,7 +97,7 @@ def format_table(headers, rows):
     table_lines = [separator, header_row, separator] + formatted_rows + [separator]
     return "\n".join(table_lines)
 
-def write_results(output_dir, top1_acc, prf_task=None):
+def write_results(output_dir, top1_acc, balanced_acc=None):
     """Write results to file."""
     os.makedirs(output_dir, exist_ok=True)
     
@@ -81,11 +107,11 @@ def write_results(output_dir, top1_acc, prf_task=None):
     valid_tasks = []  # Track valid tasks for average calculation
     
     for i in range(len(top1_acc)):
-        prec = recall = f1 = "N/A"
-        if prf_task:
-            prec = f"{prf_task['precision'][i]:.4f}" if prf_task['precision'][i] > 0 else "-"
-            recall = f"{prf_task['recall'][i]:.4f}" if prf_task['recall'][i] > 0 else "-"
-            f1 = f"{prf_task['f1'][i]:.4f}" if prf_task['f1'][i] > 0 else "-"
+        # Use balanced accuracy instead of precision, recall, F1
+        if balanced_acc is not None and len(balanced_acc) > i:
+            bacc_str = f"{balanced_acc[i]:.4f}" if balanced_acc[i] > 0 else "-"
+        else:
+            bacc_str = "N/A"
         
         if top1_acc[i] >= 0:  # Valid task with data
             top1_str = f"{top1_acc[i]:.4f}"
@@ -96,7 +122,7 @@ def write_results(output_dir, top1_acc, prf_task=None):
         rows.append([
             f"Task {tasks[i]}",
             top1_str,
-            prec, recall, f1
+            bacc_str
         ])
     
     # Calculate average only for valid tasks
@@ -104,18 +130,63 @@ def write_results(output_dir, top1_acc, prf_task=None):
         valid_accs = [top1_acc[i] for i in valid_tasks]
         avg_top1 = sum(valid_accs) / len(valid_accs)
         avg_str = f"{avg_top1:.4f}"
+        
+        # Calculate average balanced accuracy for valid tasks
+        if balanced_acc is not None:
+            valid_bacc = [balanced_acc[i] for i in valid_tasks if balanced_acc[i] > 0]
+            avg_bacc = sum(valid_bacc) / len(valid_bacc) if valid_bacc else 0.0
+            avg_bacc_str = f"{avg_bacc:.4f}" if avg_bacc > 0 else "-"
+        else:
+            avg_bacc_str = "N/A"
     else:
         avg_str = "-"
+        avg_bacc_str = "-"
     
-    rows.append(["Average", avg_str, "-", "-", "-"])
+    rows.append(["Average", avg_str, avg_bacc_str])
     
-    headers = ["Task", "Top-1", "Precision", "Recall", "F1"]
+    headers = ["Task", "Top-1", "Balanced Accuracy"]
     table_str = format_table(headers, rows)
     
     with open(os.path.join(output_dir, "results.txt"), "w") as f:
         f.write(table_str)
     
     print(table_str)
+    return table_str
+
+def write_model_info(output_dir, params_count, GFLOPs):
+    """Write model information including parameters count and GFLOPs to file."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Prepare rows for the model info table
+    rows = []
+    
+    # Add parameter counts
+    rows.append(["Logit Scale", f"{params_count['logit_scale']:,}"])
+    rows.append(["Vision Transformer", f"{params_count['vision_transformer']:,}"])
+    rows.append(["Text Features", f"{params_count['text_features']:,}"])
+    rows.append(["VPT Tokens", f"{params_count['vpt_tokens']:,}"])
+    rows.append(["Total Trainable", f"{params_count['total_trainable']:,}"])
+    rows.append(["Total All", f"{params_count['total_all']:,}"])
+    
+    # Add GFLOPs
+    rows.append(["GFLOPs", f"{GFLOPs:.2f}"])
+    
+    headers = ["Component", "Count/Value"]
+    table_str = format_table(headers, rows)
+    
+    # Save to file
+    with open(os.path.join(output_dir, "model_info.txt"), "w") as f:
+        f.write("MODEL INFORMATION\n")
+        f.write("="*30 + "\n\n")
+        f.write(table_str)
+        f.write("\n\nNotes:\n")
+        f.write("- Parameter counts include all parameters in each component\n")
+        f.write("- Total Trainable excludes text_features (registered buffer)\n")
+        f.write("- GFLOPs computed with single forward pass\n")
+    
+    print("\nModel Information:")
+    print(table_str)
+    
     return table_str
 
 def save_confusion_matrix(y_true, y_pred, class_names, task_name, output_dir):
@@ -305,6 +376,7 @@ def load_text_features(text_path, device):
     try:
         obj = torch.load(text_path, map_location=device)
         if isinstance(obj, dict) and "text_features" in obj:
+            # If saved as state_dict than load the tensor
             return obj["text_features"]
         elif torch.is_tensor(obj):
             return obj
@@ -320,7 +392,7 @@ def load_model(model_type, num_prompt, ckpt_dir, device, pe_vision_config="PE-Co
     if model_type.startswith('PECore'):
         model = PECore_Vision(
             vision_cfg=PE_VISION_CONFIG[pe_vision_config],
-            num_prompt=num_prompt if 'VPT' in model_type else 0
+            num_prompt=num_prompt
         )
         model.load_baseline(vision_ckpt, device)
         image_transform = get_image_transform(model.image_size)
@@ -329,7 +401,7 @@ def load_model(model_type, num_prompt, ckpt_dir, device, pe_vision_config="PE-Co
     elif model_type.startswith('Siglip2'):
         model = Siglip2Vision(
             AutoConfig.from_pretrained(siglip2_repo_id, cache_dir="./hf_models"),
-            num_prompt=num_prompt if 'VPT' in model_type else 0
+            num_prompt=num_prompt
         )
         model.load_baseline(vision_ckpt, device)
         image_transform = T.Compose([
@@ -342,7 +414,7 @@ def load_model(model_type, num_prompt, ckpt_dir, device, pe_vision_config="PE-Co
         raise NotImplementedError(f"Model type {model_type} not implemented")
     
     # Load VPT tokens if needed
-    if 'VPT' in model_type and vpt_tokens:
+    if num_prompt > 0 and vpt_tokens:
         num_tokens = 3 if 'single' in model_type else 1
         for token_path in vpt_tokens[:num_tokens]:
             try:
@@ -555,9 +627,12 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
         }
         
         # Compute metrics and save results for this dataset
-        prf_task = compute_prf_metrics(all_true, all_pred)
-        write_results(output_dir, top1_acc, prf_task)
-        
+        balanced_acc = compute_balanced_accuracy(all_true, all_pred)        
+        write_results(output_dir, top1_acc, balanced_acc)
+
+        GFLOPs = compute_GFLOPs(model, device)
+        params_count = model.get_parameters_count()
+        write_model_info(base_out, params_count, GFLOPs)
         # Save confusion matrices
         task_names = ["Age", "Gender", "Emotion"]
         cm_dir = os.path.join(output_dir, "confusion_matrices")
