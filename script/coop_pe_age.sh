@@ -67,6 +67,7 @@ python3 test_new.py --model_type "PECoreVPT" \
                     --dataset_path "../processed_datasets/datasets_with_standard_labels/UTKFace" \
                     "../processed_datasets/datasets_with_standard_labels/FairFace" \
                     "../processed_datasets/datasets_with_standard_labels/VggFace2-Test" \
+                    --ckpt_dir "../TRAIN/PECore/L14/vpt/Age_cntx_15_vpt_10/ckpt/" \
                     --batch_size 128 --no_tqdm
 echo "#######################################################################"
 python3 test_new.py --model_type "PECoreVPT" \
