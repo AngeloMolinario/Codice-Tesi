@@ -8,7 +8,6 @@ from tqdm import tqdm
 import numpy as np
 import os
 from matplotlib import pyplot as plt
-from torch.profiler import profile_macs
 
 # Import your custom modules (adjust paths as needed)
 from core.vision_encoder.pe import CLIP
@@ -598,7 +597,7 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
     GFLOPs = compute_GFLOPs(model, device)
     params_count = model.get_parameters_count()
     write_model_info(base_out, params_count, GFLOPs)
-    
+
     for dataset_path in args.dataset_paths:
         if not os.path.exists(dataset_path):
             print(f"Warning: {dataset_path} does not exist, skipping")

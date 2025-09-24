@@ -31,7 +31,7 @@
     "EMD_MU": -0.0025,
     "DATASET_ROOT": "../processed_datasets/datasets_with_standard_labels",
     "BALANCE_TASK" : {"2" : 0.33},
-    "BATCH_SIZE" : 64,
+    "BATCH_SIZE" : 60,
     "NUM_WORKERS" : 3,
     "LR" : 0.002,
     "OUTPUT_DIR" : "../TRAIN/PECore/L14/SoftCPT/TSCA_cntx_25_vpt_10",
