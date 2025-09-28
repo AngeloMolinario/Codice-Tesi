@@ -384,7 +384,7 @@ def load_text_features(text_path, device):
     return None
 
 def load_model(model_type, num_prompt, ckpt_dir, device, pe_vision_config="PE-Core-L14-336", 
-               siglip2_repo_id="google/siglip2-base-patch16-224", save_type="bacc"):
+               siglip2_repo_id="google/siglip2-base-patch16-224", save_type="bval"):
     """Load and configure model."""
     vision_ckpt, vpt_tokens, text_path, logit_scale = discover_checkpoints(ckpt_dir, save_type)
     
@@ -614,7 +614,7 @@ def evaluate_multiple_datasets(model, image_processor, device, args):
         dataset = BaseDataset(dataset_path, transform=image_processor, split="test", verbose=False)
         dataloader = DataLoader(
             dataset, batch_size=args.batch_size, shuffle=False, 
-            num_workers=3
+            num_workers=8
         )
         
         print(f"Evaluating on dataset: {dataset_path}")
@@ -678,9 +678,8 @@ def main(args):
 def parse_args():
     """Parse command line arguments."""
     parser = ArgumentParser()
-    parser.add_argument('--model_type', type=str, default='PECoreBase',
-                        choices=['PECoreBase', 'Siglip2Base', 'PECoreVPT', 'Siglip2VPT',
-                                'PECoreSoftCPT', 'Siglip2SoftCPT', 'PECoreVPT_single', 'Siglip2VPT_single'])
+    parser.add_argument('--model_type', type=str, default='PECore',
+                        choices=['PECore', 'Siglip2'])
     parser.add_argument('--dataset_paths', type=str, nargs='+', required=True, 
                         help='Dataset path(s) - single path or multiple paths')
     parser.add_argument('--batch_size', type=int, default=16)

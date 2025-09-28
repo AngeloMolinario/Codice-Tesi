@@ -11,6 +11,7 @@ from torch.nn import functional as F
 from dataclasses import asdict
 import numpy as np
 import os
+from huggingface_hub import hf_hub_download
 
 from wrappers.PerceptionEncoder.vision_model import VisionTransformer as CustomVisionTransformer
 from wrappers.PerceptionEncoder.text_model import TextTransformer as CustomTextTransformer
@@ -289,7 +290,7 @@ class PECore_Vision(nn.Module):
         else:
             print(f"No VPT token found in {ckpt_path}")
 
-    def load_baseline(self, ckpt_path, device):
+    def load_baseline(self, ckpt_path, device, name="PE-Core-L14-336", cache_dir="./hf_model"):
         """
         Carica il vision encoder da un checkpoint.
         Supporta sia i checkpoint originali PE che quelli salvati con `save_vision_model`.
@@ -299,8 +300,15 @@ class PECore_Vision(nn.Module):
             device (torch.device): Dispositivo su cui caricare il modello.
         """
         # Scegli la sorgente: se esiste un file locale usa quello, altrimenti il checkpoint di default
-        path = ckpt_path if (ckpt_path is not None and os.path.exists(ckpt_path)) else fetch_pe_checkpoint("PE-Core-L14-336")
-
+        if (ckpt_path is not None and os.path.exists(ckpt_path)):
+            path = ckpt_path
+        else:
+            # Dowload the model
+            print(f"Checkpoint path  {ckpt_path} not found. Downloading the default checkpoint for {name}...")
+            _path = f"facebook/{name}:{name}.pt"
+            repo, file = _path.split(":")
+            path = hf_hub_download(repo_id=repo, filename=file, cache_dir=cache_dir)
+            print(f"Checkpoint downloaded to {path}")
         _sd = torch.load(path, map_location=device)
         if isinstance(_sd, dict) and ("state_dict" in _sd or "weights" in _sd):
             _sd = _sd.get("state_dict", _sd.get("weights", _sd))
