@@ -13,7 +13,7 @@ All the datasets used for training and testing were preprocessed using the code 
 
 To obtain the cropped faces for each dataset, run the following Python script:
 ```bash
-python3 dataset_processing.py --folder ../datasets_with_standard_labels/CelebA_HQ --output_dir ../processed_datasets --num_workers 4 --size 384
+python3 dataset_processing.py --folder ../datasets_with_standard_labels/CelebA_HQ --output_dir ../processed_datasets --num_threads 4 --size 384
 ```
 
 or for simplicity run the script process.sh that calls the Python script for all the datasets used.
