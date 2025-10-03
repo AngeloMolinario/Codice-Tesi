@@ -19,10 +19,7 @@
     ],
 
     "DATASET_NAMES": {
-        "-1" : ["FairFace", "RAF-DB", "CelebA_HQ", "Lagenda"],
-        "0"  : ["FairFace"],   
-        "1"  : ["RAF-DB"],
-        "2"  : ["RAF-DB"]    
+        "-1" : ["FairFace", "RAF-DB", "CelebA_HQ", "Lagenda"] 
     },
     "CSP": false,
     "EMD_WEIGHT" : 30,
