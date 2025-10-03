@@ -46,6 +46,35 @@ All the experiments can be reproduced either by running the scripts independentl
 ```bash
 ./script/coop_pe_emotion.sh
 ```
+## Testing
+To test a model, and obtain the accuracy score, the GFLOPs, and the parameters counts use the test.py script:
+```bash
+python3 test.py --model_type "PECore" \
+                    --num_prompt 0 \
+                    --dataset_path "../processed_datasets/datasets_with_standard_labels/RAF-DB" \
+                    "../processed_datasets/datasets_with_standard_labels/UTKFace" \
+                    "../processed_datasets/datasets_with_standard_labels/FairFace" \
+                    "../processed_datasets/datasets_with_standard_labels/CelebA_HQ" \
+                    "../processed_datasets/datasets_with_standard_labels/VggFace2-Test" \
+                    --ckpt_dir "../TRAIN/PECore/L14/SoftCPT/TSCA_cntx_15/ckpt/" \
+                    --batch_size 32 --no_tqdm
+```
+
+The arguments that the script takes are the following ones:
+
+**`--model_type`** : "PECore" 
+
+**`--dataset_paths`** : path to the dataset to be tested, each separated by a space. For each dataset the test split is loaded.
+
+**`--bacth_size`** : Size of the batch to be used.
+
+**`--output_path`** : Output directory to use for saving the result and the plot, if not passed the output directory is automatically set from the ckpt_dir (TRAIN -> TEST)
+
+**`--num_prompt`** : Number of visual prompt token present in the loaded model, if the model only use text prompting use 0.
+
+**`--ckpt_dir`** : Path to the checkpoint directory containing all the weights saved during training. The different .pt files are automatically detected and loaded. (Note: If no vision_ckpt.pt is found in the ckpt directory that it is automatically downlaoded from the huggingface hub)
+
+**`--no_tqdm`** : If passed no progress bar is shown.
 
 ## Configuration
 
