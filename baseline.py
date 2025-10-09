@@ -48,7 +48,6 @@ TEXT_PROMPTS = [
     ]
 ]
 
-
 def compute_GFLOPs(model, device='cpu'):
     """Compute GFLOPs of the model (placeholder function)."""
     
@@ -75,7 +74,6 @@ def compute_GFLOPs(model, device='cpu'):
         print(f"Profiling failed: {str(e)}. Returning 0.0")
         return 0.0
     
-
 def compute_balanced_accuracy(all_true_labels, all_pred_labels):
     """Compute balanced accuracy per task."""
     balanced_acc = [0.0, 0.0, 0.0]
@@ -592,8 +590,7 @@ def evaluate_multiple_datasets(model, image_processor, text_features, device, ar
 
         # Compute metrics and save results for this dataset
         balanced_acc = compute_balanced_accuracy(all_true, all_pred)
-        c_index = None#compute_c_index_per_task(all_true, all_pred)
-        write_results(output_dir, top1_acc, balanced_acc, c_index)
+        write_results(output_dir, top1_acc, balanced_acc)
 
         
         # Save confusion matrices
@@ -622,7 +619,7 @@ def main(args):
     tokenizer = PETokenizer(32)
 
     model.to(device)
-
+    model.eval()
     # Load text features
     text_features = []
     for text in TEXT_PROMPTS:
@@ -631,7 +628,7 @@ def main(args):
 
     text_features = torch.cat(text_features).to(device)
     print(f"Text features shape (before encoding): {text_features.shape}")
-    text_features = model.encode_text(text_features)
+    text_features = model.encode_text(text_features, True)
     print(f"Text features shape: {text_features.shape}")
 
 

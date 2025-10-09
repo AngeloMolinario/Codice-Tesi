@@ -9,7 +9,6 @@ import numpy as np
 import os
 from matplotlib import pyplot as plt
 
-# Import your custom modules (adjust paths as needed)
 from core.vision_encoder.pe import CLIP
 from core.vision_encoder.config import *
 from core.vision_encoder.transforms import get_image_transform
