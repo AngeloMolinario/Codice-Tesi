@@ -34,7 +34,7 @@
     "BATCH_SIZE" : 60,
     "NUM_WORKERS" : 3,
     "LR" : 0.002,
-    "OUTPUT_DIR" : "../TRAIN/PECore/L14/SoftCPT/TSCA_cntx_20_vpt_10",
+    "OUTPUT_DIR" : "../TRAIN/PECore/L14/SoftCPT/TSCA_cntx_20_vpt_10_new",
     "PREFETCH_FACTOR" : 1,
     "VERBOSE": true,
     "USE_TQDM": false,

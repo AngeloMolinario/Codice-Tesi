@@ -295,11 +295,13 @@ def main():
     #############################################################################################
 
     model = get_model(config).to(DEVICE)
-    if hasattr(config, "PRETRAINED_COOP"):
-        print(f"Loading pretrained checkpoint from {config.PRETRAINED_COOP}")
+    if hasattr(config, "PRETRAINED_CPT"):
+        print(f"Loading pretrained checkpoint from {config.PRETRAINED_CPT}")
         model.load_softCPT_token(config.PRETRAINED_CPT)
         model.to(DEVICE)
         print("Pretrained weights loaded.")
+    else:
+        print("No pretrained CoOp checkpoint provided, training from scratch.")
 
     # Save the vision model right after loading
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
@@ -314,6 +316,7 @@ def main():
                                transform=get_image_transform(config, model.image_size),
                                augmentation_transform=get_augmentation_transform(config, model.image_size)
                                )
+    
     validation_set = get_dataset(config=config,
                                  split="val",
                                  transform=get_image_transform(config, model.image_size)
