@@ -301,7 +301,7 @@ def main():
         model.to(DEVICE)
         print("Pretrained weights loaded.")
     else:
-        print("No pretrained CoOp checkpoint provided, training from scratch.")
+        print("No pretrained SoftCPT checkpoint provided, training from scratch.")
 
     # Save the vision model right after loading
     os.makedirs(os.path.join(config.OUTPUT_DIR, "ckpt"), exist_ok=True)
@@ -376,7 +376,7 @@ def main():
 
     # Create optimizer
     vision_params = []
-    coop_params = []
+    text_params = []
     total_trainable_params = 0
     
     for name, param in model.named_parameters():
@@ -385,8 +385,8 @@ def main():
             # Separazione parametri basata sul nome
             if 'visual' in name or 'vision' in name or 'vpt' in name:
                 vision_params.append(param)
-            else:  # CoOp parameters (text context, logit_scale, logit_bias, etc.)
-                coop_params.append(param)
+            else:  # Text parameters (text context, logit_scale, logit_bias, etc.)
+                text_params.append(param)
             total_trainable_params += param.numel()
             print(f"Parameter: {name}, shape: {param.shape}, numel: {param.numel()}")
         else:
@@ -404,17 +404,17 @@ def main():
         })
         print(f"Vision group: {len(vision_params)} parameter groups")
     
-    if coop_params:
-        # Use lower learning rate for CoOp if we have pretrained CoOp, otherwise use same LR
-        coop_lr = config.LR * 0.1 if hasattr(config, "PRETRAINED_COOP") else config.LR
+    if text_params:
+        # Use lower learning rate for Text if we have pretrained Text, otherwise use same LR
+        text_lr = config.LR * 0.1 if hasattr(config, "PRETRAINED_CPT") else config.LR
         optimizer_groups.append({
-            "params": coop_params, 
-            "lr": coop_lr, 
+            "params": text_params, 
+            "lr": text_lr, 
             "weight_decay": 0.0, 
-            "name": "coop_group"
+            "name": "text_group"
         })
-        print(f"CoOp group: {len(coop_params)} parameter groups (lr: {coop_lr})")
-    
+        print(f"Text group: {len(text_params)} parameter groups (lr: {text_lr})")
+
     if not optimizer_groups:
         raise ValueError("No trainable parameters found!")
     
