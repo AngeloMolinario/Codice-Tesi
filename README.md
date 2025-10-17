@@ -31,21 +31,67 @@ Note: The uploaded ../processed_datasets.zip already contains the processed and 
 
 ## Start the Training
 
-There are two training scripts that have been used to run the experiments: one for single-task training and one for multitask training. Both work in the same way: they take a JSON configuration file that contains all the information needed for training. Using the configuration files, it is possible to select the type of experiment to run and the hyperparameters.
+There are two training python scripts that have been used to run the experiments: one for single-task training and one for multitask training. Both work in the same way: they take a JSON configuration file that contains all the information needed for training. Using the configuration files, it is possible to select the type of experiment to run and the hyperparameters.
 
-For example, to run a single-task CoOp experiment with context length 15, the command is:
+The experiments can be reproduced by running the following python scripts:
+### Single task Coop experiments for emotion task
 ```bash
 python3 coop_train.py ./config/coop/emotion/PE_coop_15.json
+python3 coop_train.py ./config/coop/emotion/PE_coop_20.json
+python3 coop_train.py ./config/coop/emotion/PE_coop_25.json
 ```
-For the multitask training, run:
+### Single task VPT + Coop experiments for emotion task
 ```bash
-python3 train_multitask.py ./config/coop/emotion/PE_coop_15.json
+python3 coop_train.py ./config/coop/emotion/PE_vpt_10_cn15.json
+python3 coop_train.py ./config/coop/emotion/PE_vpt_10_cn20.json
+python3 coop_train.py ./config/coop/emotion/PE_vpt_10_cn25.json
+```
+### Single task Coop experiments for age task
+```bash
+python3 coop_train.py ./config/coop/age/PE_coop_15.json
+python3 coop_train.py ./config/coop/age/PE_coop_20.json
+python3 coop_train.py ./config/coop/age/PE_coop_25.json
+```
+### Single task VPT + Coop experiments for age task
+```bash
+python3 coop_train.py ./config/coop/age/PE_vpt_10_cn15.json
+python3 coop_train.py ./config/coop/age/PE_vpt_10_cn20.json
+python3 coop_train.py ./config/coop/age/PE_vpt_10_cn25.json
+```
+### Single task Coop experiments for gender task
+```bash
+python3 coop_train.py ./config/coop/gender/PE_coop_15.json
+python3 coop_train.py ./config/coop/gender/PE_coop_20.json
+python3 coop_train.py ./config/coop/gender/PE_coop_25.json
+```
+### Single task VPT + Coop experiments for gender task
+```bash
+python3 coop_train.py ./config/coop/gender/PE_vpt_10_cn15.json
+python3 coop_train.py ./config/coop/gender/PE_vpt_10_cn20.json
+python3 coop_train.py ./config/coop/gender/PE_vpt_10_cn25.json
+```
+### Mutitask SoftCPT experiments
+```bash
+python3 train_multitask.py ./config/softpe_15.json
+python3 train_multitask.py ./config/softpe_20.json
+python3 train_multitask.py ./config/softpe_25.json
+```
+### Mutitask VPT + SoftCPT experiments
+```bash
+python3 train_multitask.py ./config/vpt_10_cn_15.json
+python3 train_multitask.py ./config/vpt_10_cn_20.json
+python3 train_multitask.py ./config/vpt_10_cn_25.json
 ```
 
-All the experiments can be reproduced either by running the scripts independently for each configuration or by using the bash scripts in the script folder, which run the training and testing for particular single-task experiments or for multitask experiments. For example, to run all the experiments for the single task of emotion recognition with the two different approaches used (CoOp and VPT) you can simply run:
+In alternative is possibile to use the following bash script to run all the configuration for a particular single task or for the multitask setting (this bash script also perform the test of all the trained model at the end of all the experiment):
 ```bash
-./script/coop_pe_emotion.sh
+./script/coop_pe_age.sh      # Coop and Coop+VPT for age
+./script/coop_pe_gender.sh   # Coop and Coop+VPT for gender
+./script/coop_pe_emotion.sh  # Coop and Coop+VPT for emotion
+./script/softpe.sh           # SoftCPT and SoftCPT+VPT
 ```
+NOTE: The VPT experiments use the pretrained SoftCPT weights that are loaded from the path specified in the config file, so to run them is necessary to first launch the SoftCPT experiments.
+
 ## Testing
 To test a model, and obtain the accuracy score, the GFLOPs, and the parameters counts use the test.py script:
 ```bash
@@ -75,6 +121,24 @@ The arguments that the script takes are the following ones:
 **`--ckpt_dir`** : Path to the checkpoint directory containing all the weights saved during training. The different .pt files are automatically detected and loaded. (Note: If no vision_ckpt.pt is found in the ckpt directory that it is automatically downlaoded from the huggingface hub)
 
 **`--no_tqdm`** : If passed no progress bar is shown.
+
+
+If all the experiments are done using the previous configuration is possibile to use the following script to test all the trained model all in onces without the need to seperate run the python script above:
+
+```bash
+./script/test_all.sh
+```
+
+To test the baseline with the standard hard prompting template "A photo of a \<class\>" run the following python script:
+```bash
+python3 baseline.py --model_type "PECore" \
+                    --dataset_path "../processed_datasets/datasets_with_standard_labels/RAF-DB" \
+                    "../processed_datasets/datasets_with_standard_labels/UTKFace" \
+                    "../processed_datasets/datasets_with_standard_labels/FairFace" \
+                    "../processed_datasets/datasets_with_standard_labels/CelebA_HQ" \
+                    "../processed_datasets/datasets_with_standard_labels/VggFace2-Test" \                    
+                    --batch_size 32 --no_tqdm
+```
 
 ## Configuration
 
